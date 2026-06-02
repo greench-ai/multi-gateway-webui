@@ -244,11 +244,20 @@ export class CryptoManager {
       };
       req.onupgradeneeded = (e) => {
         const db = (e.target as IDBOpenDBRequest).result;
+        const tx = (e.target as IDBOpenDBRequest).transaction;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME);
         }
-        // v1 → v2: no schema change needed, but bump to invalidate old
-        // (incompatible) P-256 keys stored under the same KEY_ID.
+        // On any version bump, clear the existing key. The previous
+        // deviceId (92b97d21…) was paired only on aspire's local gateway
+        // and is unknown on the 8 remote gateways, so reusing it would
+        // produce DEVICE_AUTH_DEVICE_ID_MISMATCH and block pairing.
+        // Bumping the version wipes the stored key so _init() generates
+        // a fresh Ed25519 keypair and the first connect to each gateway
+        // returns a proper PAIRING_REQUIRED with a requestId.
+        if (tx && db.objectStoreNames.contains(STORE_NAME)) {
+          tx.objectStore(STORE_NAME).clear();
+        }
       };
     });
   }
