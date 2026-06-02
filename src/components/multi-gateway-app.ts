@@ -10,6 +10,8 @@ import './gateway-form';
 import './chat-panel';
 import './sessions-list';
 import './add-gateway-modal';
+import './rooms-tab';
+import { roomsManager } from '../stores/rooms-manager';
 
 @customElement('multi-gateway-app')
 export class MultiGatewayApp extends LitElement {
@@ -176,6 +178,7 @@ export class MultiGatewayApp extends LitElement {
   @state() private selectedSessionKey: string | null = null;
   @state() private showAddModal = false;
   @state() private editingGateway: StoredGateway | null = null;
+  @state() private sidebarTab: 'gateways' | 'rooms' = 'gateways';
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -244,6 +247,9 @@ export class MultiGatewayApp extends LitElement {
 
     // Connect all
     connectionManager.connectAll();
+
+    // Load rooms from IndexedDB
+    void roomsManager.load();
   }
 
   private handleAddGateway(): void {
@@ -318,26 +324,37 @@ export class MultiGatewayApp extends LitElement {
 
       <main>
         <aside class="sidebar">
-          <div class="sidebar-header">
-            <h2>Gateways</h2>
-            <button class="add-btn" @click=${this.handleAddGateway} title="Add Gateway">+</button>
+          <div class="sidebar-header" style="gap:0;">
+            <div style="display:flex;gap:8px;flex:1;">
+              <button
+                style="background:${this.sidebarTab === 'gateways' ? '#1e1e2a' : 'transparent'};color:${this.sidebarTab === 'gateways' ? '#fff' : '#6b7280'};border:none;padding:4px 10px;border-radius:6px;font-size:13px;cursor:pointer;"
+                @click=${() => (this.sidebarTab = 'gateways')}
+              >Gateways</button>
+              <button
+                style="background:${this.sidebarTab === 'rooms' ? '#1e1e2a' : 'transparent'};color:${this.sidebarTab === 'rooms' ? '#fff' : '#6b7280'};border:none;padding:4px 10px;border-radius:6px;font-size:13px;cursor:pointer;"
+                @click=${() => (this.sidebarTab = 'rooms')}
+              >Rooms</button>
+            </div>
+            <button class="add-btn" @click=${this.handleAddGateway} title="Add Gateway" style=${this.sidebarTab === 'gateways' ? '' : 'display:none;'}>+</button>
           </div>
-          <div class="gateway-list">
-            ${this.gateways.length === 0
-              ? html`<p style="padding:16px;font-size:13px;color:#6b7280;">No gateways configured</p>`
-              : this.gateways.map(
-                  (gw) => html`
-                    <gateway-card
-                      .state=${gw}
-                      ?selected=${gw.config.id === this.selectedGatewayId}
-                      @select=${(e: CustomEvent) => this.handleSelectGateway(e.detail)}
-                      @edit=${(e: CustomEvent) => this.handleEditGateway(e.detail)}
-                      @delete=${(e: CustomEvent) => this.handleDeleteGateway(e.detail)}
-                      @reconnect=${(e: CustomEvent) => this.handleReconnectGateway(e.detail)}
-                    ></gateway-card>
-                  `
-                )}
-          </div>
+          ${this.sidebarTab === 'gateways'
+            ? html`<div class="gateway-list">
+                ${this.gateways.length === 0
+                  ? html`<p style="padding:16px;font-size:13px;color:#6b7280;">No gateways configured</p>`
+                  : this.gateways.map(
+                      (gw) => html`
+                        <gateway-card
+                          .state=${gw}
+                          ?selected=${gw.config.id === this.selectedGatewayId}
+                          @select=${(e: CustomEvent) => this.handleSelectGateway(e.detail)}
+                          @edit=${(e: CustomEvent) => this.handleEditGateway(e.detail)}
+                          @delete=${(e: CustomEvent) => this.handleDeleteGateway(e.detail)}
+                          @reconnect=${(e: CustomEvent) => this.handleReconnectGateway(e.detail)}
+                        ></gateway-card>
+                      `
+                    )}
+              </div>`
+            : html`<rooms-tab></rooms-tab>`}
         </aside>
 
         <section class="content">
