@@ -196,20 +196,27 @@ export class MultiGatewayApp extends LitElement {
       await storageManager.seedFromList(SEED_GATEWAYS);
       gateways = SEED_GATEWAYS;
     } else {
-      // Refresh URL/ssh fields from the seed for known gateway ids. This
-      // lets us fix URLs (e.g. drop a stray /ws path) without forcing the
-      // user to manually re-add or clear IndexedDB. Tokens and pairing
-      // state are never touched.
+      // Refresh URL/ssh/token fields from the seed for known gateway ids.
+      // This lets us fix URLs (e.g. drop a stray /ws path) and re-load
+      // tokens without forcing the user to manually re-add or clear
+      // IndexedDB. Tokens are still in-memory only in the storage manager,
+      // so we have to populate gw.token here for connectionManager.
       const { SEED_GATEWAYS } = await import('../stores/seed-gateways');
       const byId = new Map(SEED_GATEWAYS.map((g) => [g.id, g]));
       for (const gw of gateways) {
         const fresh = byId.get(gw.id);
         if (!fresh) continue;
-        if (gw.gatewayUrl !== fresh.gatewayUrl || gw.sshHost !== fresh.sshHost || gw.sshUser !== fresh.sshUser) {
-          gw.gatewayUrl = fresh.gatewayUrl;
-          gw.sshHost = fresh.sshHost;
-          gw.sshUser = fresh.sshUser;
-          // Persist the updated entry (addGatewayAsync merges into the list).
+        let changed = false;
+        if (gw.gatewayUrl !== fresh.gatewayUrl) { gw.gatewayUrl = fresh.gatewayUrl; changed = true; }
+        if (gw.sshHost !== fresh.sshHost) { gw.sshHost = fresh.sshHost; changed = true; }
+        if (gw.sshUser !== fresh.sshUser) { gw.sshUser = fresh.sshUser; changed = true; }
+        // Always re-load the token from the seed on every boot, since
+        // tokens are not persisted to disk and would otherwise be empty.
+        if (!gw.token && fresh.token) {
+          gw.token = fresh.token;
+          storageManager.setToken(gw.id, fresh.token);
+        }
+        if (changed) {
           await storageManager.addGatewayAsync(gw);
         }
       }
