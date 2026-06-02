@@ -255,7 +255,7 @@ export class GatewayClient {
         mode: CLIENT_MODE,
       },
       role: 'operator',
-      scopes: [],
+      scopes: ['operator.read', 'operator.write'],
       caps: [],
       commands: [],
       permissions: {},
@@ -270,7 +270,7 @@ export class GatewayClient {
     // Surface the error to the user instead.
     const deviceAuth = await cryptoManager.createDeviceAuth(
       'operator',
-      [],
+      ['operator.read', 'operator.write'],
       token,
       nonce ?? undefined
     );
