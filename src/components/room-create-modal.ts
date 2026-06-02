@@ -185,7 +185,7 @@ export class RoomCreateModal extends LitElement {
         <div class="actions">
           <button class="cancel" @click=${() => this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }))}>Cancel</button>
           <button class="create" ?disabled=${!this.name.trim() || this.selected.size === 0} @click=${() => this.handleCreate()}>
-            Create Room
+            Create Room (${this.selected.size} selected)
           </button>
         </div>
       </div>
