@@ -404,8 +404,8 @@ export class GatewayClient {
     return res.sessionKey;
   }
 
-  async sendMessage(sessionKey: string, message: string): Promise<void> {
-    await this.rpc('chat.send', { sessionKey, message });
+  async sendMessage(sessionKey: string, message: string, idempotencyKey?: string): Promise<void> {
+    await this.rpc('chat.send', { sessionKey, message, idempotencyKey: idempotencyKey ?? crypto.randomUUID() });
   }
 
   async getChatHistory(sessionKey: string, limit = 50): Promise<unknown[]> {
