@@ -257,6 +257,16 @@ export class MultiGatewayApp extends LitElement {
     this.showAddModal = true;
   }
 
+  private handleAddBtn(): void {
+    if (this.sidebarTab === 'gateways') {
+      this.handleAddGateway();
+    } else {
+      // Delegate to the rooms tab via a DOM event
+      const tab = this.renderRoot?.querySelector('rooms-tab');
+      if (tab) tab.dispatchEvent(new CustomEvent('new-room', { bubbles: true, composed: true }));
+    }
+  }
+
   private handleEditGateway(e: CustomEvent<GatewayConfig>): void {
     const stored = storageManager.getGateway(e.detail.id);
     this.editingGateway = stored ?? null;
@@ -335,7 +345,11 @@ export class MultiGatewayApp extends LitElement {
                 @click=${() => (this.sidebarTab = 'rooms')}
               >Rooms</button>
             </div>
-            <button class="add-btn" @click=${this.handleAddGateway} title="Add Gateway" style=${this.sidebarTab === 'gateways' ? '' : 'display:none;'}>+</button>
+            <button
+              class="add-btn"
+              @click=${this.handleAddBtn}
+              title=${this.sidebarTab === 'gateways' ? 'Add Gateway' : 'New Room'}
+            >+</button>
           </div>
           ${this.sidebarTab === 'gateways'
             ? html`<div class="gateway-list">
@@ -354,11 +368,17 @@ export class MultiGatewayApp extends LitElement {
                       `
                     )}
               </div>`
-            : html`<rooms-tab></rooms-tab>`}
+            : html`<div class="gateway-list">
+                <p style="padding:16px;font-size:13px;color:#6b7280;line-height:1.5;">
+                  Pick a room on the right, or click <strong>+</strong> to create one.
+                </p>
+              </div>`}
         </aside>
 
         <section class="content">
-          ${this.selectedGatewayId && this.selectedGateway
+          ${this.sidebarTab === 'rooms'
+            ? html`<rooms-tab style="display:flex;flex:1;"></rooms-tab>`
+            : this.selectedGatewayId && this.selectedGateway
             ? html`
                 <sessions-list
                   .gatewayId=${this.selectedGatewayId}

@@ -99,6 +99,7 @@ export class RoomsTab extends LitElement {
     super.connectedCallback();
     void this.refresh();
     this.bindEvents();
+    this.addEventListener('new-room', this.openCreate as EventListener);
   }
 
   disconnectedCallback(): void {
@@ -108,6 +109,7 @@ export class RoomsTab extends LitElement {
       roomsManager.off('unread-change', this.onUnreadChange);
       roomsManager.off('message-change', this.onMessageChange);
     }
+    this.removeEventListener('new-room', this.openCreate as EventListener);
   }
 
   private bindEvents(): void {
@@ -150,6 +152,10 @@ export class RoomsTab extends LitElement {
   private handleNew(): void {
     this.showCreate = true;
   }
+
+  private openCreate = (): void => {
+    this.showCreate = true;
+  };
 
   private handleSettings(roomId: string, e: Event): void {
     e.stopPropagation();
@@ -204,6 +210,12 @@ export class RoomsTab extends LitElement {
         ${this.rooms.length === 0
           ? html`<div class="empty">
               No rooms yet. Click <strong>+</strong> in the header to create one.
+              <div style="margin-top:12px;">
+                <button
+                  @click=${() => (this.showCreate = true)}
+                  style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;"
+                >+ New Room</button>
+              </div>
             </div>`
           : this.rooms.map(
               (r) => html`
