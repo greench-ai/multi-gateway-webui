@@ -342,7 +342,7 @@ Each agent gets the **prior replies** appended as context, before their own turn
 3. **"Pin to top" and "Archive":** v1, both as simple bool flags in the schema. → Yes, ship in v1.
 4. **Member management:** v1 = operator adds/removes. v2 = agents can request to be added? → Just operator for v1.
 5. **Naming convention:** "Room" vs "Group" vs "Channel" vs "Thread"? → "Room" matches what Greench called it.
-6. **Should rooms support system messages from cron?** (e.g. "Security bot: CPU on aspire at 95%") → Yes, `MessageAuthor.kind = 'system'` covers it.
+6. **Should rooms support system messages from cron?** (e.g. "Security bot: CPU on aspire at 95%") → Yes, but **the agent posts, not the cron directly**. The cron runs *inside* each member agent's gateway (or as a scheduled task tied to it). The agent observes (e.g. polls Beszel for its own host) and *chooses* to post the observation into the room. This way the message is in the agent's voice and carries the agent's context (interpretation, related events, suggested action). A bare cron that posts `{cpu: 95}` would be cold; "Gohan here — CPU on aspire jumped to 95% at 21:14, that's the beszel-agent churn from earlier today, probably fine but worth a look" is much more useful. The cron is a *trigger* for the agent, not a poster.
 
 ## 13. File-level plan (v1)
 
