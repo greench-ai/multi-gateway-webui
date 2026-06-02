@@ -20,7 +20,11 @@ export const PROTOCOL_DEFAULT = 4;
 export const CLIENT_ID: AllowedClientId = 'webchat-ui';
 export const CLIENT_VERSION = '1.0.0';
 export const CLIENT_PLATFORM = 'web';
-export const CLIENT_MODE = 'operator';
+// Must match the clientMode used in crypto-manager's v2 auth payload
+// signing. The gateway schema only accepts: ui, cli, backend, test.
+// 'ui' is what the reference (HubClaw) and the existing device entry on
+// aspire were created with — keep this in sync.
+export const CLIENT_MODE = 'ui';
 
 // UI identity (for display)
 export const UI_NAME = 'HubClaw';

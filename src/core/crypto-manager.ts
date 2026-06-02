@@ -41,7 +41,14 @@ interface PersistedDeviceKey {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DB_NAME = 'hubclaw-crypto';
-const DB_VERSION = 2; // bumped from 1 — key schema changed (P-256 → Ed25519 raw)
+// v1 → v2: key schema changed (P-256 → Ed25519 raw)
+// v2 → v3: force fresh key on every gateway. Old deviceId (92b97d21…)
+// was paired only on aspire's local gateway under a previous attempt;
+// the 8 remote gateways don't have it. Bumping the version invalidates
+// the stored key so the SPA generates a new Ed25519 keypair, which
+// will trigger a fresh PAIRING_REQUIRED on every gateway the first
+// time the user clicks Reconnect. User approves each via SSH or Nodes.
+const DB_VERSION = 3;
 const STORE_NAME = 'keys';
 const KEY_ID = 'hubclaw-device';
 

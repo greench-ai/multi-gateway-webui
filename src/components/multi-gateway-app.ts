@@ -190,11 +190,29 @@ export class MultiGatewayApp extends LitElement {
     const saved = await storageManager.loadConfigAsync();
     let gateways = saved.gateways;
 
-    // First run: seed the 12-agent fleet from the shared knowledge file
+    // First run: seed the 9-agent fleet from the shared knowledge file
     if (gateways.length === 0) {
       const { SEED_GATEWAYS } = await import('../stores/seed-gateways');
       await storageManager.seedFromList(SEED_GATEWAYS);
       gateways = SEED_GATEWAYS;
+    } else {
+      // Refresh URL/ssh fields from the seed for known gateway ids. This
+      // lets us fix URLs (e.g. drop a stray /ws path) without forcing the
+      // user to manually re-add or clear IndexedDB. Tokens and pairing
+      // state are never touched.
+      const { SEED_GATEWAYS } = await import('../stores/seed-gateways');
+      const byId = new Map(SEED_GATEWAYS.map((g) => [g.id, g]));
+      for (const gw of gateways) {
+        const fresh = byId.get(gw.id);
+        if (!fresh) continue;
+        if (gw.gatewayUrl !== fresh.gatewayUrl || gw.sshHost !== fresh.sshHost || gw.sshUser !== fresh.sshUser) {
+          gw.gatewayUrl = fresh.gatewayUrl;
+          gw.sshHost = fresh.sshHost;
+          gw.sshUser = fresh.sshUser;
+          // Persist the updated entry (addGatewayAsync merges into the list).
+          await storageManager.addGatewayAsync(gw);
+        }
+      }
     }
 
     for (const gw of gateways) {
