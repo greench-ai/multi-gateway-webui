@@ -142,6 +142,18 @@ export class GatewayCard extends LitElement {
       background: #fb923c;
       color: #1a1a1a;
     }
+
+    .debug {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #14141c;
+      border: 1px solid #2a2a3a;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #6b7280;
+      word-break: break-all;
+    }
   `;
 
   @property({ type: Object }) state!: GatewayState;
@@ -170,6 +182,9 @@ export class GatewayCard extends LitElement {
                   >📋</button>
                 </div>
               `
+            : null}
+          ${this.state.lastMessage
+            ? html`<div class="debug">${JSON.stringify(this.state.lastMessage).slice(0, 240)}</div>`
             : null}
         </div>
         <div class="actions">

@@ -127,7 +127,8 @@ export interface GatewayState {
   version?: string;
   connId?: string;
   lastSeen?: number;
-  /** When status is 'pairing-required', this is the deviceId the operator must approve on the gateway host. */
+  /** Last raw message received from the gateway. For debug visibility. */
+  lastMessage?: unknown;
   pairingDeviceId?: string;
   /** SSH command (or CLI snippet) to run on the gateway host to approve the device. */
   pairingApproveCommand?: string;

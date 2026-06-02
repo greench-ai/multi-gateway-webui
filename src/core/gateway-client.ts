@@ -143,6 +143,14 @@ export class GatewayClient {
   private handleClose(code: number, reason: string): void {
     this.clearPending();
 
+    // Don't overwrite a pairing-required or connected state — the gateway
+    // closes the WS after sending a connect response (success or pairing-
+    // required), and we don't want the close event to flip the card back
+    // to "connecting" while waiting for the user to approve.
+    if (this.state.status === 'pairing-required' || this.state.status === 'connected') {
+      return;
+    }
+
     if (this.reconnectAttempts < 10) {
       const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
       this.reconnectAttempts++;
@@ -162,6 +170,8 @@ export class GatewayClient {
   private async handleMessage(raw: string): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('[ws msg]', raw.slice(0, 200));
+    // Stash the last message for debug visibility in the card UI.
+    try { this.state.lastMessage = JSON.parse(raw); } catch { /* keep last */ }
     let msg: ConnectChallenge | ResFrame | EventFrame;
     try {
       msg = JSON.parse(raw);
