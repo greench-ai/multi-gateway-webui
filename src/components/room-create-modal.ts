@@ -113,6 +113,8 @@ export class RoomCreateModal extends LitElement {
   @state() private description = '';
   @state() private selected = new Set<string>();
   @state() private shareReplies = false;
+  @state() private creating = false;
+  @state() private error = '';
 
   private toggle(agentId: string, e: Event): void {
     e.stopPropagation();
@@ -124,13 +126,22 @@ export class RoomCreateModal extends LitElement {
   private async handleCreate(): Promise<void> {
     const name = this.name.trim();
     if (!name || this.selected.size === 0) return;
-    const room = await roomsManager.createRoom({
-      name,
-      description: this.description.trim() || undefined,
-      members: Array.from(this.selected),
-      shareRepliesWithMembers: this.shareReplies,
-    });
-    this.dispatchEvent(new CustomEvent('created', { detail: { id: room.id }, bubbles: true, composed: true }));
+    this.creating = true;
+    try {
+      const room = await roomsManager.createRoom({
+        name,
+        description: this.description.trim() || undefined,
+        members: Array.from(this.selected),
+        shareRepliesWithMembers: this.shareReplies,
+      });
+      this.dispatchEvent(new CustomEvent('created', { detail: { id: room.id }, bubbles: true, composed: true }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.error = msg;
+      console.error('[room-create-modal] create failed', e);
+    } finally {
+      this.creating = false;
+    }
   }
 
   render() {
@@ -182,10 +193,14 @@ export class RoomCreateModal extends LitElement {
           Share replies with members (each agent sees the others' replies as prior context)
         </label>
 
+        ${this.error
+          ? html`<div style="background:#7f1d1d;color:#fecaca;padding:10px 12px;border-radius:6px;font-size:13px;margin-top:16px;font-family:monospace;">⚠ ${this.error}</div>`
+          : ''}
+
         <div class="actions">
           <button class="cancel" @click=${() => this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }))}>Cancel</button>
-          <button class="create" ?disabled=${!this.name.trim() || this.selected.size === 0} @click=${() => this.handleCreate()}>
-            Create Room (${this.selected.size} selected)
+          <button class="create" ?disabled=${!this.name.trim() || this.selected.size === 0 || this.creating} @click=${() => this.handleCreate()}>
+            ${this.creating ? 'Creating…' : `Create Room (${this.selected.size} selected)`}
           </button>
         </div>
       </div>

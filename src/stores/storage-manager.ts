@@ -20,8 +20,10 @@ import type { StoredConfig, StoredGateway } from '../core/types';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const IDB_NAME = 'hubclaw-storage';
-const IDB_VERSION = 1;
+const IDB_VERSION = 2; // bumped to add rooms + room-messages stores
 const IDB_STORE = 'gateway-meta'; // stores metadata only (no tokens)
+const ROOMS_STORE = 'rooms';
+const MESSAGES_STORE = 'room-messages';
 const CONFIG_KEY = 'hubclaw-config';
 const UI_PREFS_KEY = 'hubclaw-ui-prefs';
 
@@ -67,6 +69,16 @@ export class StorageManager {
         const db = (e.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains(IDB_STORE)) {
           db.createObjectStore(IDB_STORE);
+        }
+        if (!db.objectStoreNames.contains(ROOMS_STORE)) {
+          const rooms = db.createObjectStore(ROOMS_STORE, { keyPath: 'id' });
+          rooms.createIndex('updatedAt', 'updatedAt');
+          rooms.createIndex('archived', 'archived');
+        }
+        if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
+          const msgs = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' });
+          msgs.createIndex('roomId', 'roomId');
+          msgs.createIndex('roomId_timestamp', ['roomId', 'timestamp']);
         }
       };
     });

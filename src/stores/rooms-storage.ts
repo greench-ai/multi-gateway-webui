@@ -2,17 +2,14 @@
 // Persistence for rooms — IndexedDB only.
 // v1 keeps rooms client-side; v2 will swap to a Brainclaw-backed HTTP API.
 //
-// Two object stores:
-//   - `rooms`         — one record per Room
-//   - `room-messages` — one record per RoomMessage, indexed by roomId + timestamp
-//
-// We use the same IDB connection as storage-manager (hubclaw-storage, v1).
-// Bumping to v2 means migrating; v3 may split rooms into a dedicated DB.
+// Uses the same IDB connection (hubclaw-storage, v2) as storage-manager.
+// Schema is owned by storage-manager.ts onupgradeneeded — this file just
+// opens at v2 and assumes the stores exist.
 
 import type { Room, RoomMessage } from '../core/types';
 
 const IDB_NAME = 'hubclaw-storage';
-const IDB_VERSION = 2; // bump from 1 to add rooms + room-messages
+const IDB_VERSION = 2;
 const ROOMS_STORE = 'rooms';
 const MESSAGES_STORE = 'room-messages';
 
@@ -21,21 +18,10 @@ const MESSAGES_STORE = 'room-messages';
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(ROOMS_STORE)) {
-        const rooms = db.createObjectStore(ROOMS_STORE, { keyPath: 'id' });
-        rooms.createIndex('updatedAt', 'updatedAt');
-        rooms.createIndex('archived', 'archived');
-      }
-      if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
-        const msgs = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' });
-        msgs.createIndex('roomId', 'roomId');
-        msgs.createIndex('roomId_timestamp', ['roomId', 'timestamp']);
-      }
-    };
+    // No onupgradeneeded here — storage-manager owns the schema.
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error('IDB open blocked: another tab holds an old connection. Close other HubClaw tabs and reload.'));
   });
 }
 
