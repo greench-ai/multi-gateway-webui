@@ -35,10 +35,19 @@ export class GatewayCard extends LitElement {
     }
 
     .status-dot {
-      width: 8px;
-      height: 8px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       flex-shrink: 0;
+      box-shadow: 0 0 6px currentColor;
+    }
+
+    .status-text {
+      font-size: 11px;
+      margin-top: 2px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
     }
 
     .info {
@@ -98,6 +107,41 @@ export class GatewayCard extends LitElement {
       background: #3f1e1e;
       color: #f87171;
     }
+
+    .pairing {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #2a1f12;
+      border: 1px solid #fb923c;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #fed7aa;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      word-break: break-all;
+    }
+
+    .pairing code {
+      flex: 1;
+      white-space: pre-wrap;
+    }
+
+    .pairing .copy {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid #fb923c;
+      color: #fb923c;
+      border-radius: 3px;
+      padding: 2px 6px;
+      cursor: pointer;
+    }
+
+    .pairing .copy:hover {
+      background: #fb923c;
+      color: #1a1a1a;
+    }
   `;
 
   @property({ type: Object }) state!: GatewayState;
@@ -106,6 +150,7 @@ export class GatewayCard extends LitElement {
   render() {
     const color = statusColor(this.state.status);
     const statusText = this.state.status.charAt(0).toUpperCase() + this.state.status.slice(1);
+    const isPairing = this.state.status === 'pairing-required';
 
     return html`
       <div class="card ${this.selected ? 'selected' : ''}" @click=${this.handleSelect}>
@@ -113,8 +158,22 @@ export class GatewayCard extends LitElement {
         <div class="info">
           <div class="name">${this.state.config.name}</div>
           <div class="url">${this.state.config.gatewayUrl}</div>
+          <div class="status-text" style="color:${color}">${statusText}</div>
+          ${isPairing && this.state.pairingApproveCommand
+            ? html`
+                <div class="pairing">
+                  <code>${this.state.pairingApproveCommand}</code>
+                  <button
+                    class="copy"
+                    @click=${(e: Event) => { e.stopPropagation(); navigator.clipboard.writeText(this.state.pairingApproveCommand ?? ''); }}
+                    title="Copy command"
+                  >📋</button>
+                </div>
+              `
+            : null}
         </div>
         <div class="actions">
+          <button title="Reconnect" @click=${this.handleReconnect}>↻</button>
           <button title="Edit" @click=${this.handleEdit}>✎</button>
           <button class="delete" title="Delete" @click=${this.handleDelete}>✕</button>
         </div>
@@ -124,6 +183,11 @@ export class GatewayCard extends LitElement {
 
   private handleSelect(): void {
     this.dispatchEvent(new CustomEvent('select', { bubbles: true, composed: true }));
+  }
+
+  private handleReconnect(e: MouseEvent): void {
+    e.stopPropagation();
+    this.dispatchEvent(new CustomEvent('reconnect', { bubbles: true, composed: true }));
   }
 
   private handleEdit(e: MouseEvent): void {

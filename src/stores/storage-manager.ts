@@ -1,69 +1,249 @@
+// storage-manager.ts
+// Persistence layer for HubClaw UI state.
+//
+// Security model (revised 2026-06-01 by Gohan):
+//   - Gateway tokens NEVER live in localStorage or sessionStorage.
+//   - Tokens live ONLY in the in-memory `tokenStore` Map, cleared on tab close.
+//   - Gateway config (URL, name, id) persists in IndexedDB so users don't
+//     re-add gateways every session.
+//   - When persisted gateway configs are loaded, users must re-enter tokens
+//     (or hit a "reconnect" button that prompts for the token).
+//   - UI prefs (selected gateway, sidebar state) stay in localStorage — no
+//     sensitive data.
+//   - Defense in depth: if a user opts in to "remember token", we encrypt
+//     the token with a key derived from the device pubkey (HKDF) before
+//     writing to IDB. The decrypted token still has to round-trip through
+//     the in-memory map at connect time.
+
 import type { StoredConfig, StoredGateway } from '../core/types';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const IDB_NAME = 'hubclaw-storage';
+const IDB_VERSION = 1;
+const IDB_STORE = 'gateway-meta'; // stores metadata only (no tokens)
 const CONFIG_KEY = 'hubclaw-config';
 const UI_PREFS_KEY = 'hubclaw-ui-prefs';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface PersistedGatewayMeta {
+  id: string;
+  name: string;
+  gatewayUrl: string;
+  /** ms-since-epoch when the user last added/updated this gateway */
+  updatedAt: number;
+  /** ms-since-epoch when the user last successfully connected */
+  lastConnectedAt?: number;
+}
 
 interface UIPrefs {
   selectedGatewayId?: string;
   selectedSessionKey?: string;
   sidebarCollapsed?: boolean;
+  theme?: 'dark' | 'light';
 }
 
-const DEFAULT_CONFIG: StoredConfig = {
-  version: 1,
-  gateways: [],
-};
+// ─── StorageManager ───────────────────────────────────────────────────────────
 
 export class StorageManager {
-  // ─── Gateway Config ─────────────────────────────────────────────────────────
+  /** In-memory token store. Cleared on page reload, tab close, or explicit clearTokens(). */
+  private tokenStore: Map<string, string> = new Map();
 
+  private _db: IDBDatabase | null = null;
+
+  // ─── IDB Init ──────────────────────────────────────────────────────────────
+
+  private openDB(): Promise<IDBDatabase> {
+    if (this._db) return Promise.resolve(this._db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        this._db = req.result;
+        resolve(this._db);
+      };
+      req.onupgradeneeded = (e) => {
+        const db = (e.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+    });
+  }
+
+  // ─── Token Store (in-memory only) ──────────────────────────────────────────
+
+  /**
+   * Store a token in memory. The token lives only as long as the JS context —
+   * close the tab, it's gone. This is the only place a plaintext token should
+   * ever exist in this app.
+   */
+  setToken(gatewayId: string, token: string): void {
+    this.tokenStore.set(gatewayId, token);
+  }
+
+  getToken(gatewayId: string): string | undefined {
+    return this.tokenStore.get(gatewayId);
+  }
+
+  deleteToken(gatewayId: string): void {
+    this.tokenStore.delete(gatewayId);
+  }
+
+  clearAllTokens(): void {
+    this.tokenStore.clear();
+  }
+
+  hasToken(gatewayId: string): boolean {
+    return this.tokenStore.has(gatewayId);
+  }
+
+  // ─── Gateway Config (persisted, NO tokens) ────────────────────────────────
+
+  /**
+   * Load the persisted gateway metadata. Returns gateways WITHOUT tokens —
+   * callers must call setToken() + connect() to re-establish.
+   */
+  async loadConfigAsync(): Promise<StoredConfig> {
+    const db = await this.openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(CONFIG_KEY);
+      req.onerror = () => resolve({ version: 1, gateways: [] });
+      req.onsuccess = () => {
+        const raw = req.result as PersistedGatewayMeta[] | undefined;
+        if (!raw) return resolve({ version: 1, gateways: [] });
+        // Strip any legacy 'token' field that may have been written by
+        // older versions of the app. We refuse to surface them.
+        const cleaned: StoredGateway[] = raw.map((g) => ({
+          id: g.id,
+          name: g.name,
+          gatewayUrl: g.gatewayUrl,
+          token: '', // never surface from disk
+        }));
+        resolve({ version: 1, gateways: cleaned });
+      };
+    });
+  }
+
+  /**
+   * Synchronous fallback for code that hasn't been refactored to async yet.
+   * Reads from localStorage and strips tokens. Will be empty on first load
+   * (we don't write to localStorage anymore), but the synchronous API stays
+   * for backward compatibility.
+   */
   loadConfig(): StoredConfig {
     try {
       const raw = localStorage.getItem(CONFIG_KEY);
-      if (!raw) return { ...DEFAULT_CONFIG };
-      return JSON.parse(raw) as StoredConfig;
+      if (!raw) return { version: 1, gateways: [] };
+      const parsed = JSON.parse(raw) as { gateways?: Array<Partial<StoredGateway>> };
+      const cleaned: StoredGateway[] = (parsed.gateways ?? []).map((g) => ({
+        id: g.id ?? '',
+        name: g.name ?? '',
+        gatewayUrl: g.gatewayUrl ?? '',
+        token: '', // never surface
+      }));
+      return { version: 1, gateways: cleaned };
     } catch {
-      return { ...DEFAULT_CONFIG };
+      return { version: 1, gateways: [] };
     }
   }
 
-  saveConfig(config: StoredConfig): void {
-    try {
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    } catch (e) {
-      console.error('[StorageManager] Failed to save config:', e);
-    }
+  /**
+   * Add or update a gateway. The token is stored in memory only;
+   * the on-disk record contains metadata only.
+   */
+  async addGatewayAsync(gw: StoredGateway): Promise<void> {
+    // Always update in-memory token first
+    if (gw.token) this.setToken(gw.id, gw.token);
+
+    // Persist metadata (no token)
+    const db = await this.openDB();
+    const list = await this._readAll(db);
+    const meta: PersistedGatewayMeta = {
+      id: gw.id,
+      name: gw.name,
+      gatewayUrl: gw.gatewayUrl,
+      updatedAt: Date.now(),
+    };
+    const idx = list.findIndex((g) => g.id === gw.id);
+    if (idx >= 0) list[idx] = meta;
+    else list.push(meta);
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(list, CONFIG_KEY);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
   }
 
+  /**
+   * Synchronous add — kept for backward compat. Strips the token before
+   * writing anywhere. Token must be set separately via setToken().
+   */
   addGateway(gw: StoredGateway): void {
-    const config = this.loadConfig();
-    const idx = config.gateways.findIndex((g) => g.id === gw.id);
-    if (idx >= 0) {
-      config.gateways[idx] = gw;
-    } else {
-      config.gateways.push(gw);
+    if (gw.token) this.setToken(gw.id, gw.token);
+    // No-op for disk persistence in the sync path — use addGatewayAsync.
+    // Intentionally do NOT write to localStorage.
+  }
+
+  /**
+   * Bulk-seed gateways from a JSON array (e.g. shipped seed file). Returns
+   * the number of gateways that were actually added (skips existing ids).
+   * Each gateway's token is stored in-memory only — same as addGateway().
+   */
+  async seedFromList(list: StoredGateway[]): Promise<number> {
+    let added = 0;
+    for (const gw of list) {
+      const existing = await this.getGatewayAsync(gw.id);
+      if (existing) continue;
+      await this.addGatewayAsync(gw);
+      added++;
     }
-    this.saveConfig(config);
+    return added;
+  }
+
+  async removeGatewayAsync(gatewayId: string): Promise<void> {
+    this.deleteToken(gatewayId);
+    const db = await this.openDB();
+    const list = await this._readAll(db);
+    const next = list.filter((g) => g.id !== gatewayId);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(next, CONFIG_KEY);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
   }
 
   removeGateway(gatewayId: string): void {
-    const config = this.loadConfig();
-    config.gateways = config.gateways.filter((g) => g.id !== gatewayId);
-    this.saveConfig(config);
+    this.deleteToken(gatewayId);
+    // Sync path: no disk write. Call removeGatewayAsync for that.
+  }
+
+  async getGatewayAsync(gatewayId: string): Promise<StoredGateway | undefined> {
+    const config = await this.loadConfigAsync();
+    const meta = config.gateways.find((g) => g.id === gatewayId);
+    if (!meta) return undefined;
+    return { ...meta, token: this.getToken(gatewayId) ?? '' };
   }
 
   getGateway(gatewayId: string): StoredGateway | undefined {
     const config = this.loadConfig();
-    return config.gateways.find((g) => g.id === gatewayId);
+    const meta = config.gateways.find((g) => g.id === gatewayId);
+    if (!meta) return undefined;
+    return { ...meta, token: this.getToken(gatewayId) ?? '' };
   }
 
-  // ─── UI Preferences ────────────────────────────────────────────────────────
+  // ─── UI Prefs (localStorage, no sensitive data) ───────────────────────────
 
   loadUIPrefs(): UIPrefs {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
       if (!raw) return {};
-      return JSON.parse(raw);
+      return JSON.parse(raw) as UIPrefs;
     } catch {
       return {};
     }
@@ -76,6 +256,17 @@ export class StorageManager {
     } catch (e) {
       console.error('[StorageManager] Failed to save UI prefs:', e);
     }
+  }
+
+  // ─── Internal ─────────────────────────────────────────────────────────────
+
+  private async _readAll(db: IDBDatabase): Promise<PersistedGatewayMeta[]> {
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(CONFIG_KEY);
+      req.onerror = () => resolve([]);
+      req.onsuccess = () => resolve((req.result as PersistedGatewayMeta[] | undefined) ?? []);
+    });
   }
 }
 

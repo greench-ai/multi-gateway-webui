@@ -93,13 +93,29 @@ export interface EventFrame {
 
 // ─── Gateway State ─────────────────────────────────────────────────────────────
 
-export type GatewayStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type GatewayStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'pairing-required';
 
 export interface GatewayConfig {
   id: string;
   name: string;
   gatewayUrl: string;
   token: string;
+  /** SSH user the operator can use to approve pairing requests on the gateway host. */
+  sshUser?: string;
+  /** SSH host (Tailscale IP or hostname) the operator SSHes into to approve pairing. */
+  sshHost?: string;
+  /**
+   * The `client.id` value the gateway expects in the connect frame.
+   * GreenchClaw gateways: 'GreenchClaw-control-ui' (or 'GreenchClaw-tui')
+   * OpenClaw / NexisClaw gateways: 'webchat-ui' (or 'cli')
+   * Defaults to 'GreenchClaw-control-ui' if omitted.
+   */
+  clientId?: 'GreenchClaw-control-ui' | 'webchat-ui' | 'cli' | 'GreenchClaw-tui';
+  /**
+   * The `client.mode` value the gateway expects. Allowed: 'ui' | 'webchat' | 'cli' | 'backend' | 'node' | 'probe' | 'test'.
+   * Defaults to 'ui'.
+   */
+  clientMode?: 'ui' | 'webchat' | 'cli' | 'backend' | 'node' | 'probe' | 'test';
 }
 
 export interface GatewayState {
@@ -111,6 +127,10 @@ export interface GatewayState {
   version?: string;
   connId?: string;
   lastSeen?: number;
+  /** When status is 'pairing-required', this is the deviceId the operator must approve on the gateway host. */
+  pairingDeviceId?: string;
+  /** SSH command (or CLI snippet) to run on the gateway host to approve the device. */
+  pairingApproveCommand?: string;
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -142,6 +162,10 @@ export interface StoredGateway {
   name: string;
   gatewayUrl: string;
   token: string; // stored but used directly
+  /** SSH user the operator can use to approve pairing requests on the gateway host. */
+  sshUser?: string;
+  /** SSH host (Tailscale IP or hostname) the operator SSHes into to approve pairing. */
+  sshHost?: string;
 }
 
 export interface StoredConfig {

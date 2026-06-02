@@ -52,6 +52,7 @@ export function statusColor(status: string): string {
     case 'connected': return '#4ade80';
     case 'connecting': return '#facc15';
     case 'error': return '#f87171';
+    case 'pairing-required': return '#fb923c';
     default: return '#6b7280';
   }
 }

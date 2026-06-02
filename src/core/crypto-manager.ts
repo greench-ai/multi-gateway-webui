@@ -1,22 +1,71 @@
-import { base64UrlEncode, base64UrlDecode, nowMs, generateNonce } from './utils';
+// crypto-manager.ts
+// Ed25519 device identity for HubClaw gateway auth.
+//
+// Wire spec (matches the auth findings doc):
+//   - Algorithm:        Ed25519
+//   - Public key:       raw 32 bytes, base64url-encoded (43 chars without padding)
+//   - Private key:      raw 32 bytes (seed), base64url-encoded
+//   - Device ID:        SHA-256(raw 32-byte public key), hex (64 chars, lowercase)
+//   - Signature:        Ed25519 over the UTF-8 JSON auth payload, base64url-encoded (88 chars)
+//
+// Storage:
+//   - Keypair persists in IndexedDB so the device ID stays stable across reloads.
+//   - Private key is stored as raw bytes (NOT a CryptoKey), so it can survive page reloads
+//     without depending on extractable CryptoKey semantics.
+//
+// Library: @noble/ed25519 v2.x (already in package.json). Audited, used by ethers.js.
+//   We use the synchronous API by pre-hashing with noble/hashes.
 
-interface DeviceKey {
+import * as ed from '@noble/ed25519';
+import { sha256 } from '@noble/hashes/sha2';
+import { sha512 } from '@noble/hashes/sha512';
+import { base64UrlEncode, base64UrlDecode, nowMs } from './utils';
+
+// noble/ed25519 v2 needs sha512 wired up explicitly (sync API).
+ed.etc.sha512Sync = (...m: Uint8Array[]) => sha512(ed.etc.concatBytes(...m));
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+/** Persisted device key. Public + private keys are raw bytes (not CryptoKey). */
+interface PersistedDeviceKey {
+  /** device ID = hex(SHA-256(publicKey)) */
   id: string;
-  publicKey: string; // base64url
-  privateKey: CryptoKey; // raw JWK
+  /** base64url-encoded raw 32-byte Ed25519 public key */
+  publicKey: string;
+  /** base64url-encoded raw 32-byte Ed25519 private seed */
+  privateKey: string;
+  /** creation timestamp (ms) */
   createdAt: number;
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const DB_NAME = 'hubclaw-crypto';
+const DB_VERSION = 2; // bumped from 1 — key schema changed (P-256 → Ed25519 raw)
 const STORE_NAME = 'keys';
 const KEY_ID = 'hubclaw-device';
 
+// ─── CryptoManager ────────────────────────────────────────────────────────────
+
 export class CryptoManager {
-  private _currentKey: DeviceKey | null = null;
+  private _currentKey: PersistedDeviceKey | null = null;
+  private _db: IDBDatabase | null = null;
+  private _initPromise: Promise<string> | null = null;
 
-  // ─── Initialization ─────────────────────────────────────────────────────────
+  // ─── Initialization ───────────────────────────────────────────────────────
 
-  async init(): Promise<string> {
+  /**
+   * Initialize the crypto manager. Idempotent — calling multiple times returns
+   * the same promise. On first run, generates a new Ed25519 keypair and persists
+   * it. On subsequent runs, loads the existing keypair from IndexedDB.
+   */
+  init(): Promise<string> {
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = this._init();
+    return this._initPromise;
+  }
+
+  private async _init(): Promise<string> {
     await this.openDB();
     const stored = await this.getStoredKey();
     if (stored) {
@@ -28,75 +77,75 @@ export class CryptoManager {
     return this._currentKey.id;
   }
 
+  /** device ID = hex(SHA-256(raw 32-byte public key)) */
   get deviceId(): string {
     return this._currentKey?.id ?? '';
   }
 
+  /** base64url-encoded raw 32-byte Ed25519 public key */
   get publicKeyBase64Url(): string {
     return this._currentKey?.publicKey ?? '';
   }
 
-  // ─── Key Generation ─────────────────────────────────────────────────────────
+  // ─── Key Generation ───────────────────────────────────────────────────────
 
-  private async generateKey(): Promise<DeviceKey> {
-    const keyPair = await crypto.subtle.generateKey(
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      true, // extractable (for raw export)
-      ['sign', 'verify']
-    );
+  private async generateKey(): Promise<PersistedDeviceKey> {
+    // ed.utils.randomPrivateKey() generates 32 secure-random bytes
+    const privateKeyBytes = ed.utils.randomPrivateKey();
+    const publicKeyBytes = await ed.getPublicKeyAsync(privateKeyBytes);
 
-    // Export raw public key
-    const publicKeyRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
-    const publicKeyBase64Url = base64UrlEncode(publicKeyRaw);
-
-    // For Ed25519, we need the actual Ed25519 key pair
-    // Since Web Crypto doesn't natively support Ed25519, we'll use it for signatures
-    // and convert P-256 to the format the gateway expects
-    // Actually, let's use the raw key material approach
-
-    // Re-export private key as JWK
-    const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-
-    const id = this.fingerprint(publicKeyRaw);
+    // device ID = SHA-256(public key) hex
+    const id = bytesToHex(sha256(publicKeyBytes));
 
     return {
       id,
-      publicKey: publicKeyBase64Url,
-      privateKey: keyPair.privateKey as unknown as CryptoKey,
+      publicKey: base64UrlEncode(publicKeyBytes),
+      privateKey: base64UrlEncode(privateKeyBytes),
       createdAt: nowMs(),
     };
   }
 
-  private fingerprint(publicKeyRaw: ArrayBuffer): string {
-    const hash = new Uint8Array(32);
-    crypto.getRandomValues(hash);
-    // Use a portion of the public key as fingerprint
-    const pk = new Uint8Array(publicKeyRaw);
-    for (let i = 0; i < Math.min(16, pk.length); i++) {
-      hash[i] ^= pk[i];
-    }
-    return base64UrlEncode(hash).slice(0, 32);
-  }
+  // ─── Signing ──────────────────────────────────────────────────────────────
 
-  // ─── Signing ────────────────────────────────────────────────────────────────
+  /**
+   * Sign a UTF-8 string payload with the device's Ed25519 private key.
+   * Returns a base64url-encoded signature and the timestamp it was created.
+   */
+  async signPayload(
+    payload: string
+  ): Promise<{ signature: string; signedAt: number }> {
+    if (!this._currentKey) throw new Error('No device key — call init() first');
 
-  async signPayload(payload: string): Promise<{ signature: string; signedAt: number }> {
-    if (!this._currentKey) throw new Error('No device key');
-
-    const encoder = new TextEncoder();
-    const data = encoder.encode(payload);
-    const signature = await crypto.subtle.sign(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      this._currentKey.privateKey,
-      data
-    );
+    const data = new TextEncoder().encode(payload);
+    const privateKeyBytes = base64UrlDecode(this._currentKey.privateKey);
+    const signatureBytes = await ed.signAsync(data, privateKeyBytes);
 
     return {
-      signature: base64UrlEncode(signature),
+      signature: base64UrlEncode(signatureBytes),
       signedAt: nowMs(),
     };
   }
 
+  // ─── Auth Payload Assembly ────────────────────────────────────────────────
+
+  /**
+   * Build the canonical auth payload string for the gateway's signature
+   * verification. The gateway (src/gateway/device-auth.ts) builds the same
+   * pipe-delimited V2 string and tries to verify the signature against it.
+   * The WebUI must produce byte-for-byte the same string.
+   *
+   * V2 format (9 fields, joined by '|'):
+   *   v2 | deviceId | clientId | clientMode | role | scopes |
+   *       signedAtMs | token | nonce
+   *
+   * Where:
+   *   - scopes is joined by ',' (NOT '|')
+   *   - token and nonce are always present (empty string if not provided)
+   *   - signedAtMs is a decimal string
+   *
+   * The gateway also tries V3 (which adds platform + deviceFamily) — not
+   * used here for now. The auth findings doc specifies V2 as primary.
+   */
   createAuthPayload(
     deviceId: string,
     clientId: string,
@@ -107,26 +156,40 @@ export class CryptoManager {
     token?: string,
     nonce?: string
   ): string {
-    const parts: Record<string, unknown> = {
+    const scopeStr = scopes.join(',');
+    const tokenStr = token ?? '';
+    const nonceStr = nonce ?? '';
+    return [
+      'v2',
       deviceId,
       clientId,
       clientMode,
       role,
-      scopes,
-      signedAt: signedAtMs,
-    };
-    if (token) parts.token = token;
-    if (nonce) parts.nonce = nonce;
-    return JSON.stringify(parts);
+      scopeStr,
+      String(signedAtMs),
+      tokenStr,
+      nonceStr,
+    ].join('|');
   }
 
+  /**
+   * Build a complete device auth object for the `device` field in connect params.
+   * The gateway uses this to verify the device identity and (depending on
+   * policy) auto-approve the pairing.
+   */
   async createDeviceAuth(
     role: string,
     scopes: string[],
     token?: string,
     nonce?: string
-  ): Promise<{ id: string; publicKey: string; signature: string; signedAt: number; nonce?: string }> {
-    if (!this._currentKey) throw new Error('No device key');
+  ): Promise<{
+    id: string;
+    publicKey: string;
+    signature: string;
+    signedAt: number;
+    nonce?: string;
+  }> {
+    if (!this._currentKey) throw new Error('No device key — call init() first');
 
     const signedAtMs = nowMs();
     const authPayload = this.createAuthPayload(
@@ -142,27 +205,31 @@ export class CryptoManager {
 
     const { signature } = await this.signPayload(authPayload);
 
-    const result: { id: string; publicKey: string; signature: string; signedAt: number; nonce?: string } = {
+    const result: {
+      id: string;
+      publicKey: string;
+      signature: string;
+      signedAt: number;
+      nonce?: string;
+    } = {
       id: this._currentKey.id,
       publicKey: this._currentKey.publicKey,
       signature,
       signedAt: signedAtMs,
     };
 
-    if (nonce) result.nonce = nonce;
+    if (nonce !== undefined) result.nonce = nonce;
 
     return result;
   }
 
-  // ─── IndexedDB Storage ──────────────────────────────────────────────────────
-
-  private _db: IDBDatabase | null = null;
+  // ─── IndexedDB Storage ────────────────────────────────────────────────────
 
   private openDB(): Promise<IDBDatabase> {
     if (this._db) return Promise.resolve(this._db);
 
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
         this._db = req.result;
@@ -173,39 +240,72 @@ export class CryptoManager {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME);
         }
+        // v1 → v2: no schema change needed, but bump to invalidate old
+        // (incompatible) P-256 keys stored under the same KEY_ID.
       };
     });
   }
 
-  private async getStoredKey(): Promise<DeviceKey | null> {
+  private async getStoredKey(): Promise<PersistedDeviceKey | null> {
     const db = await this.openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const req = tx.objectStore(STORE_NAME).get(KEY_ID);
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
-        const raw = req.result as Record<string, unknown> | undefined;
+        const raw = req.result as PersistedDeviceKey | undefined;
         if (!raw) return resolve(null);
-        // We can't restore CryptoKey from storage, so we regenerate
-        // In practice, the key is re-generated on each page load
-        // This is fine since we just need a consistent device ID
-        resolve(null);
+        // Validate shape — if an old P-256 key is in there, ignore it and regen.
+        if (typeof raw.publicKey !== 'string' || typeof raw.privateKey !== 'string' || typeof raw.id !== 'string') {
+          return resolve(null);
+        }
+        // Sanity check: id must be 64 hex chars (SHA-256 output).
+        if (!/^[0-9a-f]{64}$/.test(raw.id)) {
+          return resolve(null);
+        }
+        resolve(raw);
       };
     });
   }
 
-  private async storeKey(key: DeviceKey): Promise<void> {
+  private async storeKey(key: PersistedDeviceKey): Promise<void> {
     const db = await this.openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
-      const req = tx.objectStore(STORE_NAME).put(
-        { ...key, privateKey: undefined, _keyId: KEY_ID }, // Don't store CryptoKey
-        KEY_ID
-      );
+      const req = tx.objectStore(STORE_NAME).put(key, KEY_ID);
       req.onerror = () => reject(req.error);
       req.onsuccess = () => resolve();
     });
   }
+
+  // ─── Test / Debug Helpers ─────────────────────────────────────────────────
+
+  /**
+   * Wipe the stored keypair. Useful for re-paired devices and for tests.
+   * After calling this, the next init() will generate a new keypair.
+   */
+  async reset(): Promise<void> {
+    if (!this._db) await this.openDB();
+    const db = this._db!;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const req = tx.objectStore(STORE_NAME).delete(KEY_ID);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
+    this._currentKey = null;
+    this._initPromise = null;
+  }
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+function bytesToHex(bytes: Uint8Array): string {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
 }
 
 export const cryptoManager = new CryptoManager();

@@ -72,6 +72,14 @@ export class GatewayClient {
       this.ws = null;
     }
 
+    // Reset retry counter so the user can manually reconnect after fixing
+    // an issue (e.g. pairing approved, network back online, etc).
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     this.setStatus('connecting');
 
     const wsUrl = this.config.gatewayUrl;
@@ -152,6 +160,8 @@ export class GatewayClient {
   // ─── Message Handling ────────────────────────────────────────────────────────
 
   private async handleMessage(raw: string): Promise<void> {
+    // eslint-disable-next-line no-console
+    console.log('[ws msg]', raw.slice(0, 200));
     let msg: ConnectChallenge | ResFrame | EventFrame;
     try {
       msg = JSON.parse(raw);
@@ -194,6 +204,22 @@ export class GatewayClient {
           };
         };
         this.handleHelloOk(hello.payload);
+        return;
+      }
+
+      // Connect rejected — special-case pairing-required
+      if (!res.ok && res.error) {
+        const details = (res.error.details ?? {}) as {
+          code?: string;
+          requestId?: string;
+          deviceId?: string;
+        };
+        if (details.code === 'PAIRING_REQUIRED') {
+          this.handlePairingRequired(details.deviceId ?? '', details.requestId ?? '');
+          return;
+        }
+        // Other connect rejection — record error
+        this.setStatus('error', `${res.error.code ?? 'connect-reject'}: ${res.error.message}`);
       }
       return;
     }
@@ -228,19 +254,18 @@ export class GatewayClient {
       userAgent: `hubclaw/${CLIENT_VERSION}`,
     };
 
-    // Add device auth if available
-    try {
-      const deviceAuth = await cryptoManager.createDeviceAuth(
-        'operator',
-        [],
-        token,
-        nonce ?? undefined
-      );
-      if (deviceAuth.nonce) {
-        connectParams.device = deviceAuth;
-      }
-    } catch {
-      // Device auth not available, continue without it
+    // Add device auth. Crypto init failure here means the SPA booted without
+    // a working device identity — do NOT silently fall back to no device auth,
+    // because the gateway will reject the connect once allowInsecureAuth=false.
+    // Surface the error to the user instead.
+    const deviceAuth = await cryptoManager.createDeviceAuth(
+      'operator',
+      [],
+      token,
+      nonce ?? undefined
+    );
+    if (deviceAuth.nonce) {
+      connectParams.device = deviceAuth;
     }
 
     const frame = {
@@ -251,6 +276,29 @@ export class GatewayClient {
     };
 
     this.ws!.send(JSON.stringify(frame));
+  }
+
+  private handlePairingRequired(deviceId: string, requestId: string): void {
+    // Stop retrying — pairing requires explicit operator action on the gateway host.
+    this.reconnectAttempts = Infinity;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    const host = this.parseHostFromUrl(this.config.gatewayUrl);
+    const cmd = `ssh ${this.config.sshUser ?? 'greench'}@${host} '/home/${this.config.sshUser ?? 'greench'}/bin/GreenchClaw devices approve ${requestId}'`;
+    this.state.pairingDeviceId = deviceId;
+    this.state.pairingApproveCommand = cmd;
+    this.setStatus('pairing-required', `Device ${deviceId.slice(0, 12)}… needs approval on ${host}`);
+  }
+
+  private parseHostFromUrl(url: string): string {
+    try {
+      return new URL(url).host.split(':')[0];
+    } catch {
+      return url;
+    }
   }
 
   private handleHelloOk(hello: {

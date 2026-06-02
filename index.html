@@ -4,6 +4,32 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HubClaw — Multi-Gateway WebUI</title>
+
+  <!--
+    Content-Security-Policy (revised 2026-06-01 by Gohan)
+    Strategy: lock down script sources. The SPA is a Vite-built bundle, so
+    'self' is enough for prod. We allow 'unsafe-inline' ONLY for styles
+    (Vite injects some inline styles in dev mode and at runtime). We do NOT
+    allow unsafe-eval, unsafe-inline for scripts, or any remote sources.
+
+    In dev mode (vite dev), you'll need to relax this — either run with a
+    separate index.dev.html, or set CSP_MODE=dev via Vite plugin. The build
+    target is what we ship.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: blob:;
+    font-src 'self' data:;
+    connect-src 'self' ws: wss:;
+    frame-ancestors 'none';
+    base-uri 'self';
+    form-action 'self';
+    object-src 'none';
+    upgrade-insecure-requests;
+  " />
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {

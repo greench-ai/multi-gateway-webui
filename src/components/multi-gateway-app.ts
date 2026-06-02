@@ -186,14 +186,25 @@ export class MultiGatewayApp extends LitElement {
     // Initialize crypto
     await cryptoManager.init();
 
-    // Load saved gateways
-    const saved = storageManager.loadConfig();
-    for (const gw of saved.gateways) {
+    // Load saved gateways (async — reads from IndexedDB)
+    const saved = await storageManager.loadConfigAsync();
+    let gateways = saved.gateways;
+
+    // First run: seed the 12-agent fleet from the shared knowledge file
+    if (gateways.length === 0) {
+      const { SEED_GATEWAYS } = await import('../stores/seed-gateways');
+      await storageManager.seedFromList(SEED_GATEWAYS);
+      gateways = SEED_GATEWAYS;
+    }
+
+    for (const gw of gateways) {
       const config: GatewayConfig = {
         id: gw.id,
         name: gw.name,
         gatewayUrl: gw.gatewayUrl,
         token: gw.token,
+        sshUser: gw.sshUser,
+        sshHost: gw.sshHost,
       };
       connectionManager.addGateway(config);
     }
@@ -260,6 +271,11 @@ export class MultiGatewayApp extends LitElement {
     this.selectedSessionKey = null;
   }
 
+  private handleReconnectGateway(id: string): void {
+    const client = connectionManager.getClient(id);
+    if (client) client.connect();
+  }
+
   private handleSelectSession(e: CustomEvent<string>): void {
     this.selectedSessionKey = e.detail;
   }
@@ -292,6 +308,7 @@ export class MultiGatewayApp extends LitElement {
                       @select=${(e: CustomEvent) => this.handleSelectGateway(e.detail)}
                       @edit=${(e: CustomEvent) => this.handleEditGateway(e.detail)}
                       @delete=${(e: CustomEvent) => this.handleDeleteGateway(e.detail)}
+                      @reconnect=${(e: CustomEvent) => this.handleReconnectGateway(e.detail)}
                     ></gateway-card>
                   `
                 )}
