@@ -173,3 +173,78 @@ export interface StoredConfig {
   version: number;
   gateways: StoredGateway[];
 }
+
+// ─── Rooms ─────────────────────────────────────────────────────────────────────
+
+/** A named, multi-agent conversation. The operator + 1+ agent members. */
+export interface Room {
+  id: string;
+  /** Operator's label, e.g. "HubClaw build". */
+  name: string;
+  /** Optional markdown description. */
+  description?: string;
+  /** Participants. Always includes the operator implicitly. */
+  members: RoomMember[];
+  createdAt: number;
+  /** Last message timestamp (any author). */
+  updatedAt: number;
+  /** Soft-delete flag — archived rooms move to the bottom of the list. */
+  archived: boolean;
+  /** Sticky to top of the sidebar. */
+  pinned: boolean;
+  /** When true, each agent's chat.send is prefixed with the other agents'
+   *  recent replies so the room behaves like a true group chat. See ROOMS-DESIGN.md §7. */
+  shareRepliesWithMembers: boolean;
+}
+
+export interface RoomMember {
+  /** Gateway id of the member agent, e.g. "goten". */
+  agentId: string;
+  addedAt: number;
+}
+
+/** Identifies who wrote a room message. */
+export type MessageAuthor =
+  | { kind: 'operator' }
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'system'; reason: 'member-joined' | 'member-left' | 'room-created' };
+
+/** A single message in a room. Authored by operator, agent, or system. */
+export interface RoomMessage {
+  id: string;
+  roomId: string;
+  author: MessageAuthor;
+  /** Markdown content. */
+  content: string;
+  timestamp: number;
+  /** Per-agent fan-out state. One entry per member agent the message was sent to.
+   *  Only present when author.kind === 'operator' (i.e. we initiated the fan-out). */
+  delivery?: MessageDelivery[];
+  /** Agent replies streamed in over time, in the order they arrive. */
+  replies: AgentReply[];
+  /** True if the operator cancelled the message before all replies arrived. */
+  cancelled: boolean;
+}
+
+export interface MessageDelivery {
+  agentId: string;
+  status: 'pending' | 'sent' | 'failed';
+  /** Deterministic: `room:${roomId}:${agentId}`. */
+  sessionKey: string;
+  error?: string;
+  sentAt?: number;
+}
+
+export interface AgentReply {
+  /** Matches a chat message id from the gateway. */
+  id: string;
+  agentId: string;
+  content: string;
+  timestamp: number;
+}
+
+/** Build the deterministic session key for an agent in a room. */
+export function roomSessionKey(roomId: string, agentId: string): string {
+  return `room:${roomId}:${agentId}`;
+}
+
