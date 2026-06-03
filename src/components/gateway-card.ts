@@ -76,7 +76,7 @@ export class GatewayCard extends LitElement {
     .actions {
       display: flex;
       gap: 4px;
-      opacity: 0;
+      opacity: 0.6;
       transition: opacity 0.15s;
     }
 
