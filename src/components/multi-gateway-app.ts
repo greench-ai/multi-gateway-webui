@@ -179,6 +179,20 @@ export class MultiGatewayApp extends LitElement {
   @state() private showAddModal = false;
   @state() private editingGateway: StoredGateway | null = null;
   @state() private sidebarTab: 'gateways' | 'rooms' = 'gateways';
+  /**
+   * Queue of seed gateways that need a token pasted on first run.
+   * Populated when SEED_GATEWAYS ships with empty token fields (the
+   * new build-time-stripped state — see vite-plugins/strip-seed-tokens.ts).
+   * The user pastes each token via the existing edit modal; once all
+   * are entered, this clears and the modal closes.
+   */
+  @state() private pendingTokenGateways: StoredGateway[] = [];
+  /**
+   * If true, the next handleSaveGateway will advance to the next
+   * pending-token gateway instead of just closing the modal.
+   * Set when the modal was opened by the auto-prompt flow.
+   */
+  @state() private inTokenPromptFlow = false;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -213,11 +227,19 @@ export class MultiGatewayApp extends LitElement {
         if (gw.gatewayUrl !== fresh.gatewayUrl) { gw.gatewayUrl = fresh.gatewayUrl; changed = true; }
         if (gw.sshHost !== fresh.sshHost) { gw.sshHost = fresh.sshHost; changed = true; }
         if (gw.sshUser !== fresh.sshUser) { gw.sshUser = fresh.sshUser; changed = true; }
-        // Always re-load the token from the seed on every boot, since
-        // tokens are not persisted to disk and would otherwise be empty.
-        if (!gw.token && fresh.token) {
-          gw.token = fresh.token;
-          storageManager.setToken(gw.id, fresh.token);
+        // Re-load the token from the seed on every boot ONLY if the
+        // shipped seed still contains it. With strip-seed-tokens the
+        // bundle ships empty tokens (security: see F1 audit), so this
+        // branch no longer auto-populates. We track gateways that need
+        // a user-pasted token for the first-run prompt.
+        if (gw.token && fresh.token && gw.token !== fresh.token) {
+          // Source has a real token but IDB has a different one — trust IDB.
+          // (This branch can't fire post-F1 fix since fresh.token is "".)
+        }
+        if (!gw.token && !fresh.token) {
+          // Both empty: known seed gateway with no token anywhere.
+          // Add to the queue for first-run prompt.
+          this.pendingTokenGateways.push(gw);
         }
         if (changed) {
           await storageManager.addGatewayAsync(gw);
@@ -250,6 +272,27 @@ export class MultiGatewayApp extends LitElement {
 
     // Load rooms from IndexedDB
     void roomsManager.load();
+
+    // First-run token-prompt: if any known seed gateway has no token
+    // (because the build-time strip removed it from the bundle), open
+    // the edit modal for the first one. The handleSaveGateway flow
+    // will advance through the queue.
+    if (this.pendingTokenGateways.length > 0) {
+      // Defer to next tick so the DOM is ready
+      setTimeout(() => this.openNextTokenPrompt(), 0);
+    }
+  }
+
+  private openNextTokenPrompt(): void {
+    const next = this.pendingTokenGateways[0];
+    if (!next) {
+      this.inTokenPromptFlow = false;
+      this.showAddModal = false;
+      return;
+    }
+    this.editingGateway = next;
+    this.inTokenPromptFlow = true;
+    this.showAddModal = true;
   }
 
   private handleAddGateway(): void {
@@ -292,8 +335,16 @@ export class MultiGatewayApp extends LitElement {
     const client = connectionManager.addGateway(config);
     client.connect();
 
-    this.showAddModal = false;
     this.gateways = [...connectionManager.getAllStates().values()];
+
+    // If we were in the first-run token-prompt flow and the saved
+    // gateway was the one being prompted for, advance to the next.
+    if (this.inTokenPromptFlow && this.pendingTokenGateways[0]?.id === gw.id) {
+      this.pendingTokenGateways.shift();
+      this.openNextTokenPrompt();
+    } else {
+      this.showAddModal = false;
+    }
   }
 
   private handleDeleteGateway(e: CustomEvent<string>): void {
