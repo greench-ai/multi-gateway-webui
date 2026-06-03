@@ -32,7 +32,21 @@ export class ConnectionManager {
         this.emit('status-change', config.id, state);
       },
       onEvent: (event, payload) => {
+        // Re-emit raw event for any generic listener.
         this.emit('event', config.id, event, payload);
+
+        // BUGFIX 2026-06-03: route chat events to the dedicated
+        // chat-message channel. Previously onChat callback was set
+        // but never invoked in gateway-client.ts, so chat replies
+        // never reached the rooms manager. Now we route here so the
+        // rooms manager's `bindGlobal` listener can attach replies
+        // to the correct room message.
+        if (event === 'agent.message' || event === 'chat.message') {
+          const p = payload as { sessionKey?: string; message?: unknown } | undefined;
+          if (p && typeof p.sessionKey === 'string') {
+            this.emit('chat-message', config.id, p.sessionKey, p.message);
+          }
+        }
       },
     });
 

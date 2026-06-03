@@ -194,6 +194,12 @@ export class MultiGatewayApp extends LitElement {
    */
   @state() private inTokenPromptFlow = false;
   /**
+   * BUGFIX 2026-06-03: guard against double-save of the same gateway.
+   * A second handleSaveGateway with the same gw.id within 500ms is
+   * ignored — the first save handles the queue advance.
+   */
+  private lastSaveAt: { id: string; ts: number } | null = null;
+  /**
    * Total number of gateways that were in the queue when the prompt
    * flow started. Used to display "X of N" progress to the user.
    */
@@ -278,17 +284,26 @@ export class MultiGatewayApp extends LitElement {
     // Load rooms from IndexedDB
     void roomsManager.load();
 
-    // First-run token-prompt: if any known seed gateway has no token
-    // (because the build-time strip removed it from the bundle), open
-    // the edit modal for the first one. The handleSaveGateway flow
-    // will advance through the queue.
-    if (this.pendingTokenGateways.length > 0) {
-      // Defer to next tick so the DOM is ready
-      setTimeout(() => this.openNextTokenPrompt(), 0);
-    }
+    // First-run token-prompt: DISABLED 2026-06-03 due to repeated
+    // bug-hunt cycles. The auto-prompt is too aggressive — it
+    // dispatches a modal that the user can't easily dismiss, and the
+    // queue-advance logic has subtle race conditions with Lit's
+    // reactive bindings. The user can manually add tokens by
+    // clicking the + button in the sidebar, or by clicking any
+    // gateway card in the list to open the edit modal. This is
+    // explicit and reliable.
+    //
+    // The pendingTokenGateways list is still maintained for the
+    // 'Edit Gateway' flow (so we know which gateways have no token),
+    // but the auto-prompt is off.
+    //
+    // if (this.pendingTokenGateways.length > 0) {
+    //   setTimeout(() => this.openNextTokenPrompt(), 0);
+    // }
   }
 
   private openNextTokenPrompt(): void {
+    console.log('[GOHAN-DEBUG] openNextTokenPrompt called, queue=', this.pendingTokenGateways.map(g => g.id), 'editing=', this.editingGateway?.id);
     const next = this.pendingTokenGateways[0];
     if (!next) {
       this.inTokenPromptFlow = false;
@@ -308,9 +323,13 @@ export class MultiGatewayApp extends LitElement {
     // put it at the back. User can come back to it via the edit flow
     // or by reloading the page. The token in IDB stays empty; card
     // shows "no token" until they edit it.
+    // BUGFIX 2026-06-03: same as handleSaveGateway — reassign array so
+    // Lit's @state() picks up the change.
     if (this.pendingTokenGateways.length === 0) return;
-    const skipped = this.pendingTokenGateways.shift();
-    if (skipped) this.pendingTokenGateways.push(skipped);
+    const queue = [...this.pendingTokenGateways];
+    const skipped = queue.shift();
+    if (skipped) queue.push(skipped);
+    this.pendingTokenGateways = queue;
     if (this.pendingTokenGateways.length > 0) {
       this.openNextTokenPrompt();
     } else {
@@ -342,7 +361,22 @@ export class MultiGatewayApp extends LitElement {
 
   private async handleSaveGateway(e: CustomEvent<StoredGateway>): Promise<void> {
     const gw = e.detail;
+    // BUGFIX 2026-06-03: debounce double-saves of the same gateway
+    // within 500ms. Catches a fast double-click that races with Lit's
+    // re-render of the disabled button state.
+    const now = Date.now();
+    if (this.lastSaveAt && this.lastSaveAt.id === gw.id && now - this.lastSaveAt.ts < 500) {
+      console.log('[GOHAN-DEBUG] DEBOUNCE: ignoring duplicate save for', gw.id, 'within 500ms');
+      return;
+    }
+    this.lastSaveAt = { id: gw.id, ts: now };
+    console.log('[GOHAN-DEBUG] handleSaveGateway START, gw.id=', gw.id, 'queue=', this.pendingTokenGateways.map(g => g.id), 'editing=', this.editingGateway?.id, 'STACK:', new Error().stack?.split('\n').slice(1, 4).join(' | '));
+    // Persist metadata to IDB so the gateway survives a reload.
+    // addGateway() (sync) only stores the in-memory token; we need
+    // addGatewayAsync() to write the metadata row.
     storageManager.addGateway(gw);
+    await storageManager.addGatewayAsync(gw);
+    console.log('[GOHAN-DEBUG] after addGatewayAsync, queue=', this.pendingTokenGateways.map(g => g.id));
 
     const config: GatewayConfig = {
       id: gw.id,
@@ -351,22 +385,35 @@ export class MultiGatewayApp extends LitElement {
       token: gw.token,
     };
 
-    const existing = connectionManager.getClient(gw.id);
-    if (existing) {
-      existing.disconnect();
-    }
-
+    // connection-manager.addGateway() already handles the disconnect-
+    // then-replace of any existing client for this id, so we don't
+    // need an explicit disconnect here. The previous explicit
+    // disconnect was racing with the in-flight WS handshake and
+    // producing 'WebSocket is closed before the connection is
+    // established' errors. (BUGFIX 2026-06-03)
     const client = connectionManager.addGateway(config);
     client.connect();
+    console.log('[GOHAN-DEBUG] after client.connect, queue=', this.pendingTokenGateways.map(g => g.id));
 
     this.gateways = [...connectionManager.getAllStates().values()];
 
     // If we were in the first-run token-prompt flow and the saved
     // gateway was the one being prompted for, advance to the next.
+    // BUGFIX 2026-06-03: previously used pendingTokenGateways.shift(),
+    // which mutates the array in place. Lit's @state() decorator only
+    // triggers re-render on reassignment, not on mutation, so the modal
+    // appeared to stick on the same gateway even though the queue had
+    // advanced. Reassign to a new array reference.
     if (this.inTokenPromptFlow && this.pendingTokenGateways[0]?.id === gw.id) {
-      this.pendingTokenGateways.shift();
+      console.log('[GOHAN-DEBUG] Before slice, queue:', this.pendingTokenGateways.map(g => g.id));
+      console.log('[GOHAN-DEBUG] Saved gw.id:', gw.id, 'current head:', this.pendingTokenGateways[0]?.id);
+      this.pendingTokenGateways = this.pendingTokenGateways.slice(1);
+      console.log('[GOHAN-DEBUG] After slice, queue:', this.pendingTokenGateways.map(g => g.id));
+      console.log('[GOHAN-DEBUG] Calling openNextTokenPrompt, new head:', this.pendingTokenGateways[0]?.id);
       this.openNextTokenPrompt();
+      console.log('[GOHAN-DEBUG] After openNext, editingGateway.id:', this.editingGateway?.id);
     } else {
+      console.log('[GOHAN-DEBUG] Save but no advance — flow=', this.inTokenPromptFlow, 'gw.id=', gw.id, 'head=', this.pendingTokenGateways[0]?.id);
       this.showAddModal = false;
     }
   }

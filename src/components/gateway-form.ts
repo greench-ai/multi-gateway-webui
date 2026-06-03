@@ -134,6 +134,7 @@ export class GatewayForm extends LitElement {
   @state() private gatewayUrl = '';
   @state() private token = '';
   @state() private testing = false;
+  @state() private saving = false;
   @state() private testResult: { ok: boolean; error?: string } | null = null;
 
   connectedCallback(): void {
@@ -147,7 +148,9 @@ export class GatewayForm extends LitElement {
     // the previous gateway's name/url/token state — a stale-form bug
     // that hid the first-run token-prompt flow from the user.
     if (changed.has('gateway')) {
+      console.log('[GOHAN-DEBUG] Form gateway changed, old:', (changed.get('gateway') as any)?.id, 'new:', this.gateway?.id);
       this.initFromGateway();
+      console.log('[GOHAN-DEBUG] Form after init — name:', this.name, 'token length:', this.token.length);
     }
   }
 
@@ -162,6 +165,7 @@ export class GatewayForm extends LitElement {
       this.token = '';
     }
     this.testing = false;
+    this.saving = false;
     this.testResult = null;
   }
 
@@ -221,10 +225,10 @@ export class GatewayForm extends LitElement {
         <button class="cancel-btn" @click=${this.handleCancel}>Cancel</button>
         <button
           class="save-btn"
-          ?disabled=${!this.name || !this.gatewayUrl || !this.token}
+          ?disabled=${!this.name || !this.gatewayUrl || !this.token || this.saving}
           @click=${this.handleSave}
         >
-          ${this.gateway ? 'Save Changes' : 'Add Gateway'}
+          ${this.saving ? 'Saving…' : this.gateway ? 'Save Changes' : 'Add Gateway'}
         </button>
       </div>
     `;
@@ -314,6 +318,8 @@ export class GatewayForm extends LitElement {
   }
 
   private handleSave(): void {
+    if (this.saving) return;  // BUGFIX 2026-06-03: prevent double-click re-firing save
+    this.saving = true;
     const stored: StoredGateway = {
       id: this.gateway?.id ?? generateId(),
       name: this.name,
