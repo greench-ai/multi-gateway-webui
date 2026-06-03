@@ -193,6 +193,11 @@ export class MultiGatewayApp extends LitElement {
    * Set when the modal was opened by the auto-prompt flow.
    */
   @state() private inTokenPromptFlow = false;
+  /**
+   * Total number of gateways that were in the queue when the prompt
+   * flow started. Used to display "X of N" progress to the user.
+   */
+  @state() private totalPendingCount = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -292,7 +297,26 @@ export class MultiGatewayApp extends LitElement {
     }
     this.editingGateway = next;
     this.inTokenPromptFlow = true;
+    if (this.totalPendingCount === 0) {
+      this.totalPendingCount = this.pendingTokenGateways.length;
+    }
     this.showAddModal = true;
+  }
+
+  private handleSkipGateway(): void {
+    // Skip = take the current gateway off the front of the queue and
+    // put it at the back. User can come back to it via the edit flow
+    // or by reloading the page. The token in IDB stays empty; card
+    // shows "no token" until they edit it.
+    if (this.pendingTokenGateways.length === 0) return;
+    const skipped = this.pendingTokenGateways.shift();
+    if (skipped) this.pendingTokenGateways.push(skipped);
+    if (this.pendingTokenGateways.length > 0) {
+      this.openNextTokenPrompt();
+    } else {
+      this.inTokenPromptFlow = false;
+      this.showAddModal = false;
+    }
   }
 
   private handleAddGateway(): void {
@@ -473,7 +497,15 @@ export class MultiGatewayApp extends LitElement {
             <div class="modal-overlay" @click=${(e: MouseEvent) => e.target === e.currentTarget && (this.showAddModal = false)}>
               <add-gateway-modal
                 .gateway=${this.editingGateway}
+                .promptInfo=${this.inTokenPromptFlow
+                  ? { index: this.pendingTokenGateways.length > 0
+                      ? (this.totalPendingCount - this.pendingTokenGateways.length + 1)
+                      : 0,
+                      total: this.totalPendingCount }
+                  : null}
+                ?showSkip=${this.inTokenPromptFlow}
                 @save=${this.handleSaveGateway}
+                @skip=${this.handleSkipGateway}
                 @close=${() => (this.showAddModal = false)}
               ></add-gateway-modal>
             </div>
