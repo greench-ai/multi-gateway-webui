@@ -140,29 +140,6 @@ export class StorageManager {
   }
 
   /**
-   * Synchronous fallback for code that hasn't been refactored to async yet.
-   * Reads from localStorage and strips tokens. Will be empty on first load
-   * (we don't write to localStorage anymore), but the synchronous API stays
-   * for backward compatibility.
-   */
-  loadConfig(): StoredConfig {
-    try {
-      const raw = localStorage.getItem(CONFIG_KEY);
-      if (!raw) return { version: 1, gateways: [] };
-      const parsed = JSON.parse(raw) as { gateways?: Array<Partial<StoredGateway>> };
-      const cleaned: StoredGateway[] = (parsed.gateways ?? []).map((g) => ({
-        id: g.id ?? '',
-        name: g.name ?? '',
-        gatewayUrl: g.gatewayUrl ?? '',
-        token: '', // never surface
-      }));
-      return { version: 1, gateways: cleaned };
-    } catch {
-      return { version: 1, gateways: [] };
-    }
-  }
-
-  /**
    * Add or update a gateway. The token is stored in memory only;
    * the on-disk record contains metadata only.
    */
@@ -195,16 +172,10 @@ export class StorageManager {
    * Synchronous add — kept for backward compat. Strips the token before
    * writing anywhere. Token must be set separately via setToken().
    */
-  addGateway(gw: StoredGateway): void {
-    if (gw.token) this.setToken(gw.id, gw.token);
-    // No-op for disk persistence in the sync path — use addGatewayAsync.
-    // Intentionally do NOT write to localStorage.
-  }
-
   /**
    * Bulk-seed gateways from a JSON array (e.g. shipped seed file). Returns
    * the number of gateways that were actually added (skips existing ids).
-   * Each gateway's token is stored in-memory only — same as addGateway().
+   * Each gateway's token is stored in-memory only.
    */
   async seedFromList(list: StoredGateway[]): Promise<number> {
     let added = 0;
@@ -230,20 +201,8 @@ export class StorageManager {
     });
   }
 
-  removeGateway(gatewayId: string): void {
-    this.deleteToken(gatewayId);
-    // Sync path: no disk write. Call removeGatewayAsync for that.
-  }
-
   async getGatewayAsync(gatewayId: string): Promise<StoredGateway | undefined> {
     const config = await this.loadConfigAsync();
-    const meta = config.gateways.find((g) => g.id === gatewayId);
-    if (!meta) return undefined;
-    return { ...meta, token: this.getToken(gatewayId) ?? '' };
-  }
-
-  getGateway(gatewayId: string): StoredGateway | undefined {
-    const config = this.loadConfig();
     const meta = config.gateways.find((g) => g.id === gatewayId);
     if (!meta) return undefined;
     return { ...meta, token: this.getToken(gatewayId) ?? '' };

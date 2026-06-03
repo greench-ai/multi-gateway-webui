@@ -394,10 +394,8 @@ export class MultiGatewayApp extends LitElement {
     }
     this.lastSaveAt = { id: gw.id, ts: now };
     console.log('[GOHAN-DEBUG] handleSaveGateway START, gw.id=', gw.id, 'queue=', this.pendingTokenGateways.map(g => g.id), 'editing=', this.editingGateway?.id, 'STACK:', new Error().stack?.split('\n').slice(1, 4).join(' | '));
-    // Persist metadata to IDB so the gateway survives a reload.
-    // addGateway() (sync) only stores the in-memory token; we need
-    // addGatewayAsync() to write the metadata row.
-    storageManager.addGateway(gw);
+    // Persist to IDB (and update in-memory token via the same call).
+    // The previous sync addGateway() was a redundant no-op for disk writes.
     await storageManager.addGatewayAsync(gw);
     console.log('[GOHAN-DEBUG] after addGatewayAsync, queue=', this.pendingTokenGateways.map(g => g.id));
 
