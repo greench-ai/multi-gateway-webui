@@ -350,7 +350,14 @@ export class GatewayClient {
     }
 
     // Chat messages
-    if (event === 'agent.message' || event === 'chat.message') {
+    // BUGFIX 2026-06-03: added 'chat' to the list. The GreenchClaw
+    // gateway emits streaming chat updates as 'chat' events (not
+    // 'agent.message' or 'chat.message'). Payload shape:
+    //   { runId, sessionKey, seq, state: 'delta'|'final', message }
+    // The connection-manager routes the payload.sessionKey to the
+    // chat-message channel; rooms-manager.bindGlobal matches the
+    // sessionKey and attaches the reply to the right room.
+    if (event === 'agent.message' || event === 'chat.message' || event === 'chat') {
       this.onEvent(event, payload);
       return;
     }
@@ -405,6 +412,23 @@ export class GatewayClient {
   }
 
   async sendMessage(sessionKey: string, message: string, idempotencyKey?: string): Promise<void> {
+    // BUGFIX 2026-06-03: the GreenchClaw gateway only streams 'chat'
+    // events to nodes that have explicitly subscribed via
+    // `sessions.messages.subscribe` (see
+    // /home/greench/GreenchClaw/src/gateway/server-methods/sessions.ts
+    // and server-node-subscriptions.ts). Without this, chat.send
+    // delivers the message but no agent.message/chat events come
+    // back, so the room view never sees the reply.
+    //
+    // We subscribe first (idempotent on the server side, returns
+    // already-subscribed if duplicate), then send. If subscribe
+    // fails for any reason we still try the send — some gateway
+    // versions may auto-subscribe on chat.send.
+    try {
+      await this.rpc('sessions.messages.subscribe', { sessionKey });
+    } catch (e) {
+      console.warn('[gateway-client] sessions.messages.subscribe failed, sending anyway:', e);
+    }
     await this.rpc('chat.send', { sessionKey, message, idempotencyKey: idempotencyKey ?? crypto.randomUUID() });
   }
 

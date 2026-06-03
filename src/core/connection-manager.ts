@@ -41,7 +41,13 @@ export class ConnectionManager {
         // never reached the rooms manager. Now we route here so the
         // rooms manager's `bindGlobal` listener can attach replies
         // to the correct room message.
-        if (event === 'agent.message' || event === 'chat.message') {
+        //
+        // The GreenchClaw gateway emits chat updates as 'chat'
+        // events (payload: { runId, sessionKey, seq, state, message })
+        // — not 'agent.message' or 'chat.message'. We pass the full
+        // message object so the room manager can access id/content/
+        // role/timestamp for the reply.
+        if (event === 'agent.message' || event === 'chat.message' || event === 'chat') {
           const p = payload as { sessionKey?: string; message?: unknown } | undefined;
           if (p && typeof p.sessionKey === 'string') {
             this.emit('chat-message', config.id, p.sessionKey, p.message);

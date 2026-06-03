@@ -135,12 +135,19 @@ class RoomsManager {
       }
       // Sanity: the gateway reporting should match the agent in the sessionKey.
       if (gatewayId !== agentId) return;
-      const msg = message as { id?: string; content?: unknown; role?: string; timestamp?: number };
-      if (!msg || !msg.id) return;
+      const msg = message as { id?: string; content?: unknown; role?: string; timestamp?: number; runId?: string; seq?: number };
+      if (!msg) return;
+      // BUGFIX 2026-06-03: projected chat messages from the gateway
+      // (see GreenchClaw/src/gateway/chat-display-projection.ts) may
+      // not have an `id` field. Use runId+seq as a stable dedup key
+      // when id is missing. Both fields are part of the gateway's
+      // chat event payload.
+      const replyId = msg.id ?? `chat:${msg.runId ?? '?'}:${msg.seq ?? '?'}`;
+      if (!replyId) return;
       this.handleAgentReply(roomId, {
-        id: String(msg.id),
+        id: replyId,
         agentId,
-        content: typeof msg.content === 'string' ? msg.content : String(msg.content ?? ''),
+        content: this.extractReplyText(msg),
         timestamp: Number(msg.timestamp ?? Date.now()),
       });
     });
@@ -413,6 +420,34 @@ class RoomsManager {
     await this.updateRoom(roomId, {});
     this.markUnread(roomId);
     this.emit('message-change', roomId, target.id);
+  }
+
+  /**
+   * Extract plain text from a gateway chat event payload. The GreenchClaw
+   * gateway emits chat messages with content in several shapes:
+   *   - string (final state, plain reply)
+   *   - array of content blocks (streaming deltas: [{type:'text', text:'...'}])
+   *   - { text: '...' } (older final format)
+   *   - undefined (heartbeat, suppressed reply)
+   * Returns an empty string if no extractable text.
+   */
+  private extractReplyText(msg: { content?: unknown; text?: string }): string {
+    if (typeof msg.content === 'string') return msg.content;
+    if (Array.isArray(msg.content)) {
+      return msg.content
+        .map((block) => {
+          if (typeof block === 'string') return block;
+          if (block && typeof block === 'object') {
+            const b = block as { text?: string; content?: unknown };
+            if (typeof b.text === 'string') return b.text;
+            if (typeof b.content === 'string') return b.content;
+          }
+          return '';
+        })
+        .join('');
+    }
+    if (typeof msg.text === 'string') return msg.text;
+    return '';
   }
 
   private markUnread(roomId: string): void {
