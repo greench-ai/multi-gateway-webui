@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { stripSeedTokens } from './vite-plugins/strip-seed-tokens';
 
 export default defineConfig({
   server: {
@@ -14,4 +15,7 @@ export default defineConfig({
     outDir: 'dist',
     target: 'es2022',
   },
+  plugins: [
+    stripSeedTokens(),
+  ],
 });
