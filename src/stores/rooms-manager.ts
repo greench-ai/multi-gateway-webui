@@ -108,12 +108,31 @@ class RoomsManager {
   private bindGlobal(): void {
     if (this.bound) return;
     connectionManager.on('chat-message', (gatewayId, sessionKey, message) => {
-      // sessionKey format: `room:${roomId}:${agentId}`
-      if (!sessionKey || !sessionKey.startsWith('room:')) return;
-      const parts = sessionKey.split(':');
-      if (parts.length < 3) return;
-      const roomId = parts[1];
-      const agentId = parts[2];
+      // BUGFIX 2026-06-03: room sessionKey is now `agent:${agentId}:room-${roomId}`
+      // (was `room:${roomId}:${agentId}`) so the GreenchClaw gateway
+      // recognizes it as an agent session and runs the agent loop.
+      // Two matching shapes:
+      //   - 'agent:${agentId}:room-${roomId}'  (room chat — new)
+      //   - 'room:${roomId}:${agentId}'         (legacy, for any in-flight
+      //                                            messages before the upgrade)
+      if (!sessionKey) return;
+      let roomId: string | null = null;
+      let agentId: string | null = null;
+      if (sessionKey.startsWith('agent:')) {
+        // agent:${agentId}:room-${roomId}
+        const m = sessionKey.match(/^agent:([^:]+):room-(.+)$/);
+        if (!m) return;
+        agentId = m[1];
+        roomId = m[2];
+      } else if (sessionKey.startsWith('room:')) {
+        // room:${roomId}:${agentId}
+        const parts = sessionKey.split(':');
+        if (parts.length < 3) return;
+        roomId = parts[1];
+        agentId = parts[2];
+      } else {
+        return;
+      }
       // Sanity: the gateway reporting should match the agent in the sessionKey.
       if (gatewayId !== agentId) return;
       const msg = message as { id?: string; content?: unknown; role?: string; timestamp?: number };

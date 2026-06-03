@@ -243,8 +243,23 @@ export interface AgentReply {
   timestamp: number;
 }
 
-/** Build the deterministic session key for an agent in a room. */
+/**
+ * Build the deterministic session key for an agent in a room.
+ *
+ * BUGFIX 2026-06-03: was `room:${roomId}:${agentId}`. The GreenchClaw
+ * gateway only recognizes session keys starting with `agent:`, `acp:`,
+ * or `subagent:` (see /home/greench/GreenchClaw/src/sessions/session-key-utils.ts:
+ *   isAgentSessionKey, isSubagentSessionKey, isAcpSessionKey).
+ * A `room:` key was accepted by chat.send (so the user saw ✓ delivery)
+ * but the gateway's session runtime never sent back events for it
+ * (no agent loop, no event stream), so the room never received replies.
+ *
+ * Fix: use the `agent:` prefix with the agentId and a sub-key for the
+ * room. The gateway's parseAgentSessionKey() will match this, the agent
+ * will be invoked, and the room listener in rooms-manager.bindGlobal
+ * (which now also matches `agent:` prefix) will route replies back.
+ */
 export function roomSessionKey(roomId: string, agentId: string): string {
-  return `room:${roomId}:${agentId}`;
+  return `agent:${agentId}:room-${roomId}`;
 }
 
