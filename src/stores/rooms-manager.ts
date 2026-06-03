@@ -21,6 +21,7 @@ import type {
   RoomMessage,
 } from '../core/types';
 import { roomSessionKey } from '../core/types';
+import { storageManager } from './storage-manager';
 import { connectionManager } from '../core/connection-manager';
 import { roomsStorage, roomMessagesStorage } from './rooms-storage';
 
@@ -269,16 +270,32 @@ class RoomsManager {
     if (room.members.length === 0) return undefined;
 
     const now = Date.now();
+
+    // BUGFIX 2026-06-03: look up each member's gateway config to get
+    // its configured agentId. The GreenchClaw gateway uses a SEPARATE
+    // agent id to look up the agent runtime (default 'main'), so the
+    // room session key must use that id, not the gateway id.
+    const memberAgentIds = await Promise.all(
+      room.members.map(async (m) => {
+        const gw = await storageManager.getGatewayAsync(m.agentId);
+        return {
+          gatewayId: m.agentId,
+          sessionAgentId: gw?.agentId?.trim() || m.agentId,
+        };
+      }),
+    );
+
     const msg: RoomMessage = {
       id: uuid(),
       roomId,
       author: { kind: 'operator' },
       content: trimmed,
       timestamp: now,
-      delivery: room.members.map((m) => ({
-        agentId: m.agentId,
-        status: 'pending',
-        sessionKey: roomSessionKey(roomId, m.agentId),
+      delivery: memberAgentIds.map(({ gatewayId, sessionAgentId }) => ({
+        agentId: gatewayId,
+        sessionAgentId,
+        status: 'pending' as const,
+        sessionKey: roomSessionKey(roomId, sessionAgentId),
       })),
       replies: [],
       cancelled: false,

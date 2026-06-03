@@ -133,6 +133,10 @@ export class GatewayForm extends LitElement {
   @state() private name = '';
   @state() private gatewayUrl = '';
   @state() private token = '';
+  /** BUGFIX 2026-06-03: GreenchClaw agent id (separate from gateway id).
+   * Most installs use 'main'. Override here if the gateway has a
+   * custom agent name. Empty string = use gateway id (legacy default). */
+  @state() private agentId = '';
   @state() private testing = false;
   @state() private saving = false;
   @state() private testResult: { ok: boolean; error?: string } | null = null;
@@ -159,10 +163,12 @@ export class GatewayForm extends LitElement {
       this.name = this.gateway.name;
       this.gatewayUrl = this.gateway.gatewayUrl;
       this.token = this.gateway.token;
+      this.agentId = this.gateway.agentId ?? '';
     } else {
       this.name = '';
       this.gatewayUrl = '';
       this.token = '';
+      this.agentId = '';
     }
     this.testing = false;
     this.saving = false;
@@ -202,6 +208,20 @@ export class GatewayForm extends LitElement {
           @input=${(e: InputEvent) => (this.token = (e.target as HTMLInputElement).value)}
         />
       </div>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <div class="field">
+          <label>Agent ID (override)</label>
+          <input
+            type="text"
+            placeholder="main (default for most installs)"
+            .value=${this.agentId}
+            @input=${(e: InputEvent) => (this.agentId = (e.target as HTMLInputElement).value)}
+          />
+          <small>The GreenchClaw agent id to invoke for room chat. Leave blank to use the gateway's id (legacy). Most lab gateways use 'main'.</small>
+        </div>
+      </details>
 
       <div class="field">
         <label>Test Connection</label>
@@ -325,6 +345,9 @@ export class GatewayForm extends LitElement {
       name: this.name,
       gatewayUrl: this.gatewayUrl,
       token: this.token,
+      // BUGFIX 2026-06-03: include the agentId override (empty string
+      // = use gateway id). StoredGateway.agentId is optional.
+      ...(this.agentId.trim() ? { agentId: this.agentId.trim() } : {}),
     };
     this.dispatchEvent(new CustomEvent('save', { detail: stored, bubbles: true, composed: true }));
   }

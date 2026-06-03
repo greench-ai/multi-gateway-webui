@@ -167,6 +167,23 @@ export interface StoredGateway {
   sshUser?: string;
   /** SSH host (Tailscale IP or hostname) the operator SSHes into to approve pairing. */
   sshHost?: string;
+  /**
+   * The GreenchClaw agent id to invoke for room chat on this gateway.
+   * BUGFIX 2026-06-03: most lab gateways have a 'main' agent (the
+   * default), but some custom installs name their agents differently
+   * (e.g. 'ops', 'research'). If unset, the WebUI falls back to the
+   * gateway's id (e.g. 'kojiro'), which the gateway will reject with
+   * 'Agent "kojiro" no longer exists in configuration' if no agent by
+   * that name is configured.
+   *
+   * Room session keys are built as: `agent:${agentId}:room-${roomId}`.
+   * The gateway's parseAgentSessionKey() uses this to look up the
+   * agent to invoke.
+   *
+   * If you have a non-default agent name, set this field in the
+   * seed or in the gateway-form's advanced settings.
+   */
+  agentId?: string;
 }
 
 export interface StoredConfig {
@@ -228,8 +245,15 @@ export interface RoomMessage {
 
 export interface MessageDelivery {
   agentId: string;
+  /**
+   * The GreenchClaw agent id used to build the session key. May differ
+   * from agentId (which is the gateway id) when the gateway has a
+   * custom agent configured (e.g. the gateway id is 'kojiro' but the
+   * configured agent is 'main'). See StoredGateway.agentId.
+   */
+  sessionAgentId?: string;
   status: 'pending' | 'sent' | 'failed';
-  /** Deterministic: `room:${roomId}:${agentId}`. */
+  /** Deterministic: `agent:${sessionAgentId}:room-${roomId}`. */
   sessionKey: string;
   error?: string;
   sentAt?: number;
@@ -246,20 +270,26 @@ export interface AgentReply {
 /**
  * Build the deterministic session key for an agent in a room.
  *
- * BUGFIX 2026-06-03: was `room:${roomId}:${agentId}`. The GreenchClaw
- * gateway only recognizes session keys starting with `agent:`, `acp:`,
- * or `subagent:` (see /home/greench/GreenchClaw/src/sessions/session-key-utils.ts:
- *   isAgentSessionKey, isSubagentSessionKey, isAcpSessionKey).
- * A `room:` key was accepted by chat.send (so the user saw ✓ delivery)
- * but the gateway's session runtime never sent back events for it
- * (no agent loop, no event stream), so the room never received replies.
+ * History (recorded for the postmortem):
+ *   - 2026-06-03 (1st fix): was `room:${roomId}:${agentId}` — gateway
+ *     recognized the chat.send but never invoked the agent loop, so
+ *     no events came back. Switched to `agent:` prefix.
+ *   - 2026-06-03 (2nd fix): was `agent:${agentId}:room-${roomId}` —
+ *     gateway rejected with 'Agent "kojiro" no longer exists in
+ *     configuration' because not every lab gateway has an agent
+ *     named after the machine. Most GreenchClaw installs use 'main'
+ *     as the default agent id.
  *
- * Fix: use the `agent:` prefix with the agentId and a sub-key for the
- * room. The gateway's parseAgentSessionKey() will match this, the agent
- * will be invoked, and the room listener in rooms-manager.bindGlobal
- * (which now also matches `agent:` prefix) will route replies back.
+ * Current: use 'main' (the gateway's default agent) so every gateway
+ * can route the room chat to SOMETHING that exists. If the user has
+ * a custom agent id per machine, override via SEED_GATEWAYS.agentId
+ * in seed-gateways.ts (StoredGateway has the field).
  */
 export function roomSessionKey(roomId: string, agentId: string): string {
   return `agent:${agentId}:room-${roomId}`;
 }
+
+/** The GreenchClaw gateway's default agent id. Used when the seed gateway
+ * doesn't specify a custom agentId. Most GreenchClaw installs use 'main'. */
+export const DEFAULT_AGENT_ID = 'main';
 

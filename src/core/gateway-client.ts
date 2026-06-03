@@ -425,7 +425,11 @@ export class GatewayClient {
     // fails for any reason we still try the send — some gateway
     // versions may auto-subscribe on chat.send.
     try {
-      await this.rpc('sessions.messages.subscribe', { sessionKey });
+      // BUGFIX 2026-06-03: the method takes a `key` parameter, NOT
+      // `sessionKey`. The GreenchClaw gateway's schema validator
+      // rejects the wrong property name with: 'must have required
+      // property key; at root: unexpected property sessionKey'.
+      await this.rpc('sessions.messages.subscribe', { key: sessionKey });
     } catch (e) {
       console.warn('[gateway-client] sessions.messages.subscribe failed, sending anyway:', e);
     }
