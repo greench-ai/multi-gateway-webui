@@ -138,11 +138,31 @@ export class GatewayForm extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.initFromGateway();
+  }
+
+  willUpdate(changed: Map<string, unknown>): void {
+    // Re-initialize when the gateway property changes (e.g. the modal
+    // re-opens with a different gateway). Without this, the form keeps
+    // the previous gateway's name/url/token state — a stale-form bug
+    // that hid the first-run token-prompt flow from the user.
+    if (changed.has('gateway')) {
+      this.initFromGateway();
+    }
+  }
+
+  private initFromGateway(): void {
     if (this.gateway) {
       this.name = this.gateway.name;
       this.gatewayUrl = this.gateway.gatewayUrl;
       this.token = this.gateway.token;
+    } else {
+      this.name = '';
+      this.gatewayUrl = '';
+      this.token = '';
     }
+    this.testing = false;
+    this.testResult = null;
   }
 
   render() {
