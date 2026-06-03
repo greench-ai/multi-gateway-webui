@@ -353,9 +353,32 @@ export class MultiGatewayApp extends LitElement {
     }
   }
 
-  private handleEditGateway(e: CustomEvent<GatewayConfig>): void {
-    const stored = storageManager.getGateway(e.detail.id);
-    this.editingGateway = stored ?? null;
+  private async handleEditGateway(e: CustomEvent<GatewayConfig>): Promise<void> {
+    // BUGFIX 2026-06-03: was using the SYNC storageManager.getGateway(),
+    // which reads from localStorage. The localStorage config is always
+    // empty in the current build (security migration moved all gateway
+    // metadata to IndexedDB; see storage-manager.ts loadConfig comment).
+    // Result: getGateway() returned undefined for every seed gateway,
+    // so the edit modal opened in 'Add' mode with empty fields, and
+    // saving created a duplicate gateway with a new generated id.
+    // Fix: use getGatewayAsync (reads from IDB) to look up the
+    // existing seed, and pre-populate the form with its name + URL.
+    // The user just needs to paste the token.
+    const id = e.detail.id;
+    const stored = await storageManager.getGatewayAsync(id);
+    if (stored) {
+      this.editingGateway = stored;
+    } else {
+      // Fallback: if IDB doesn't have it (very old install), use the
+      // config from the in-memory state so the user at least sees the
+      // current URL. Token stays empty (user has to paste).
+      this.editingGateway = {
+        id,
+        name: e.detail.name,
+        gatewayUrl: e.detail.gatewayUrl,
+        token: e.detail.token ?? '',
+      };
+    }
     this.showAddModal = true;
   }
 
