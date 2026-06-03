@@ -197,22 +197,38 @@ export class GatewayCard extends LitElement {
   }
 
   private handleSelect(): void {
-    this.dispatchEvent(new CustomEvent('select', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('select', {
+      detail: this.state.config.id,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   private handleReconnect(e: MouseEvent): void {
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('reconnect', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('reconnect', {
+      detail: this.state.config.id,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   private handleEdit(e: MouseEvent): void {
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('edit', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('edit', {
+      detail: this.state.config,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   private handleDelete(e: MouseEvent): void {
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('delete', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('delete', {
+      detail: this.state.config.id,
+      bubbles: true,
+      composed: true,
+    }));
   }
 }
 
