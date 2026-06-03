@@ -482,9 +482,9 @@ export class MultiGatewayApp extends LitElement {
                         <gateway-card
                           .state=${gw}
                           ?selected=${gw.config.id === this.selectedGatewayId}
-                          @select=${(e: CustomEvent) => this.handleSelectGateway(e.detail)}
-                          @edit=${(e: CustomEvent) => this.handleEditGateway(e.detail)}
-                          @delete=${(e: CustomEvent) => this.handleDeleteGateway(e.detail)}
+                          @select=${(e: CustomEvent) => this.handleSelectGateway(e)}
+                          @edit=${(e: CustomEvent) => this.handleEditGateway(e)}
+                          @delete=${(e: CustomEvent) => this.handleDeleteGateway(e)}
                           @reconnect=${(e: CustomEvent) => this.handleReconnectGateway(e.detail)}
                         ></gateway-card>
                       `
