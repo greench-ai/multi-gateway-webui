@@ -181,11 +181,57 @@ export class StorageManager {
     let added = 0;
     for (const gw of list) {
       const existing = await this.getGatewayAsync(gw.id);
-      if (existing) continue;
+      if (existing) {
+        // BUGFIX 2026-06-03: when the seed defines a field that the
+        // existing IDB record lacks, propagate the field. Previously
+        // we skipped the entire record, which meant adding
+        // `agentId: 'main'` to the seed for Kojiro (after the
+        // gatewayId-vs-agentId fix) had no effect on users who
+        // already had Kojiro in their IDB. Now we merge: existing
+        // user data wins on conflicts (so we don't clobber their
+        // token), but new seed-only fields are applied.
+        const updates: Partial<StoredGateway> = {};
+        if (gw.agentId && !existing.agentId) updates.agentId = gw.agentId;
+        if (gw.sshUser && !existing.sshUser) updates.sshUser = gw.sshUser;
+        if (gw.sshHost && !existing.sshHost) updates.sshHost = gw.sshHost;
+        if (gw.gatewayUrl && existing.gatewayUrl !== gw.gatewayUrl) {
+          // URL changed in seed (rare) — only update if user hasn't customized.
+          // (We have no way to tell; assume the seed is the source of truth for URL.)
+        }
+        if (Object.keys(updates).length > 0) {
+          // BUGFIX 2026-06-03: addGatewayAsync overwrites the whole
+          // record, which would clobber the user's token. Instead,
+          // patch the IDB record in place to preserve token + other
+          // user-set fields.
+          await this.patchGatewayAsync(gw.id, updates);
+        }
+        continue;
+      }
       await this.addGatewayAsync(gw);
       added++;
     }
     return added;
+  }
+
+  /**
+   * Update specific fields of an existing gateway in IDB. Preserves
+   * fields not in the patch (e.g. token) so the user doesn't have
+   * to re-paste it. BUGFIX 2026-06-03: needed so seedFromList can
+   * propagate agentId to existing gateways without wiping tokens.
+   */
+  async patchGatewayAsync(gatewayId: string, patch: Partial<StoredGateway>): Promise<void> {
+    const db = await this.openDB();
+    const list = await this._readAll(db);
+    const idx = list.findIndex((g) => g.id === gatewayId);
+    if (idx === -1) return;
+    const next = [...list];
+    next[idx] = { ...next[idx], ...patch };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(next, CONFIG_KEY);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
   }
 
   async removeGatewayAsync(gatewayId: string): Promise<void> {

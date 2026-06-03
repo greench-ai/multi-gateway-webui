@@ -238,6 +238,10 @@ export class MultiGatewayApp extends LitElement {
         if (gw.gatewayUrl !== fresh.gatewayUrl) { gw.gatewayUrl = fresh.gatewayUrl; changed = true; }
         if (gw.sshHost !== fresh.sshHost) { gw.sshHost = fresh.sshHost; changed = true; }
         if (gw.sshUser !== fresh.sshUser) { gw.sshUser = fresh.sshUser; changed = true; }
+        // BUGFIX 2026-06-03: also propagate agentId so existing IDB
+        // records pick up the 'main' default from the seed (gatewayId
+        // and agentId are different concepts; see StoredGateway.agentId).
+        if (fresh.agentId && gw.agentId !== fresh.agentId) { gw.agentId = fresh.agentId; changed = true; }
         // Re-load the token from the seed on every boot ONLY if the
         // shipped seed still contains it. With strip-seed-tokens the
         // bundle ships empty tokens (security: see F1 audit), so this
