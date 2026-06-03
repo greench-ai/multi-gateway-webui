@@ -441,9 +441,16 @@ export class MultiGatewayApp extends LitElement {
     }
   }
 
-  private handleDeleteGateway(e: CustomEvent<string>): void {
+  private async handleDeleteGateway(e: CustomEvent<string>): Promise<void> {
     const id = e.detail;
-    storageManager.removeGateway(id);
+    // BUGFIX 2026-06-03: was using the SYNC storageManager.removeGateway()
+    // which only deletes the in-memory token and never writes to IDB.
+    // Result: in-session the gateway looked deleted, but on reload the
+    // seed/init code re-added it from IDB. So users saw 'delete' not
+    // stick across page refreshes (and could pile up duplicates by
+    // repeatedly adding+deleting the same seed).
+    // Fix: use removeGatewayAsync (writes to IDB) so the delete persists.
+    await storageManager.removeGatewayAsync(id);
     connectionManager.removeGateway(id);
     if (this.selectedGatewayId === id) {
       this.selectedGatewayId = null;
